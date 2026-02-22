@@ -1,53 +1,184 @@
 <!DOCTYPE html>
 <html lang="es" class="dark">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>StreamHub - Ultimate Feed</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamHub - Ultimate Feed</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap" rel="stylesheet">
 
-  <!-- Tailwind via CDN (fácil para empezar) -->
-  <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background: #050505; color: white; overflow-x: hidden; }
 
-  <!-- Fuente -->
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap" rel="stylesheet">
+        /* Utilidades */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-  <style>
-    body {
-      font-family: 'Plus Jakarta Sans', sans-serif;
-      background: #050505;
-      color: white;
-      overflow-x: hidden;
-    }
+        /* --- BOTONES DE CONTROL CARRUSEL --- */
+        .nav-btn {
+            position: absolute; top: 0; bottom: 0; z-index: 40; width: 60px;
+            display: none; align-items: center; justify-content: center;
+            transition: opacity 0.3s;
+        }
+        .nav-btn.left { left: 0; background: linear-gradient(to right, #050505 0%, transparent 100%); }
+        .nav-btn.right { right: 0; background: linear-gradient(to left, #050505 0%, transparent 100%); }
+        .nav-btn button {
+            background: rgba(255,255,255,0.1); backdrop-filter: blur(10px);
+            border-radius: 50%; width: 40px; height: 40px; border: 1px solid rgba(255,255,255,0.1);
+            color: white; font-size: 20px; transition: transform 0.2s, background 0.2s;
+        }
+        .nav-btn button:hover { background: rgba(255,255,255,0.3); transform: scale(1.1); }
+        @media (min-width: 1024px) { .carousel-wrapper:hover .nav-btn { display: flex; } }
 
-    .no-scrollbar::-webkit-scrollbar { display: none; }
-    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-  </style>
+        /* --- ESTILOS DE TARJETAS (FEED) --- */
+        .card-std { min-width: 200px; width: 200px; display: flex; flex-direction: column; gap: 10px; cursor: pointer; position: relative; }
+        .card-video {
+            height: 220px; width: 220px; flex-shrink: 0; position: relative; overflow: hidden; border-radius: 12px;
+            transition: width 0.5s cubic-bezier(0.25, 1, 0.5, 1); cursor: pointer;
+        }
+        @media (min-width: 1024px) { .card-video:hover { width: 390px; } }
+        .card-list-group { min-width: 340px; display: flex; flex-direction: column; gap: 16px; }
+        .list-item { display: flex; align-items: center; gap: 12px; padding: 6px; border-radius: 8px; transition: background 0.2s; cursor: pointer; }
+        .list-item:hover { background: rgba(255,255,255,0.08); }
+
+        /* --- INTERACCIÓN --- */
+        .overlay-full {
+            position: absolute; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px);
+            opacity: 0; transition: opacity 0.3s; display: flex; align-items: center; justify-content: center; gap: 12px; border-radius: 12px;
+        }
+        .group:hover .overlay-full { opacity: 1; }
+        .overlay-mini {
+            position: absolute; inset: 0; background: rgba(0,0,0,0.4); opacity: 0; transition: opacity 0.2s;
+            display: flex; align-items: center; justify-content: center; border-radius: 4px;
+        }
+        .list-item:hover .overlay-mini { opacity: 1; }
+
+        /* Iconos */
+        .action-icon { width: 36px; height: 36px; transition: transform 0.2s, opacity 0.3s; cursor: pointer; pointer-events: auto; }
+        .action-icon:hover { transform: scale(1.15); }
+        .play-icon-lg { width: 56px; height: 56px; transition: transform 0.2s; cursor: pointer; pointer-events: auto; }
+        .play-icon-lg:hover { transform: scale(1.1); }
+        .play-icon-sm { width: 28px; height: 28px; pointer-events: auto; }
+
+        /* Grid View Card */
+        .grid-card { width: 100%; display: flex; flex-direction: column; gap: 10px; cursor: pointer; position: relative; }
+        .grid-card .aspect-square { border-radius: 12px; overflow: hidden; position: relative; }
+
+        /* BÚSQUEDA MEJORADA PARA DESKTOP */
+        .desktop-search-container { position: relative; }
+        .desktop-search-results {
+            position: absolute; top: 100%; left: 0; right: 0;
+            background: rgba(10, 10, 10, 0.98); backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px;
+            margin-top: 8px; padding: 12px; max-height: 400px; overflow-y: auto;
+            z-index: 1000; display: none; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+        .desktop-search-results.active { display: block; animation: fadeIn 0.2s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        .search-result-item { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
+        .search-result-item:hover { background: rgba(255, 255, 255, 0.1); }
+
+        /* BOTÓN PLAY PARA MÓVIL */
+        .mobile-play-button {
+            position: absolute; bottom: 8px; right: 8px; width: 32px; height: 32px;
+            background: rgba(0, 0, 0, 0.7); border-radius: 50%; display: flex;
+            align-items: center; justify-content: center; z-index: 30; pointer-events: auto;
+        }
+        @media (min-width: 1024px) { .mobile-play-button { display: none; } }
+
+        /* Búsqueda móvil mejorada */
+        #mobileSearchBar {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+            transform: translateY(-100%); transition: transform 0.3s ease;
+        }
+        #mobileSearchBar.open { transform: translateY(0); }
+        .search-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(8px);
+            z-index: 9998; opacity: 0; visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+        .search-overlay.active { opacity: 1; visibility: visible; }
+
+        /* Móvil Disable Hovers */
+        @media (max-width: 1023px) {
+            .overlay-full, .overlay-mini, .nav-btn { display: none !important; }
+        }
+    </style>
 </head>
 <body>
 
-  <!-- Aquí va todo tu HTML original (header, main, etc.) -->
-  <!-- Por ahora solo ponemos algo muy básico para probar -->
+    <div class="search-overlay" id="searchOverlay" onclick="closeSearch()"></div>
 
-  <header class="sticky top-0 z-50 bg-[#050505]/80 backdrop-blur-xl border-b border-white/5">
-    <div class="max-w-[1600px] mx-auto px-6 py-4 flex items-center justify-between">
-      <a href="/" class="flex items-center gap-2">
-        <span class="text-xl font-bold text-white">StreamHub</span>
-      </a>
-      <div class="text-gray-400">Cargando contenido...</div>
+    <header id="top-header" class="sticky top-0 z-50 bg-[#050505]/80 backdrop-blur-xl border-b border-white/5">
+        <div class="max-w-[1600px] mx-auto px-6 py-4 flex items-center justify-between" id="header-container">
+            <a href="/" class="flex items-center gap-2">
+                <img src="https://media.baltaanay.org/web/image/885-f3d79ca9/xhbalta-aula.png" alt="StreamHub Logo" class="w-8 h-8 rounded-lg object-cover" loading="lazy">
+                <span class="text-xl font-bold text-white">Media</span>
+            </a>
+
+            <div class="hidden lg:flex items-center gap-4 desktop-search-container">
+                <div class="relative">
+                    <input type="text" id="desktopSearch" placeholder="Buscar episodios, series..." class="bg-white/10 border border-white/20 rounded-full px-4 py-2 pl-10 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500" oninput="handleDesktopSearchInput(this.value)" onkeypress="if(event.key === 'Enter') handleDesktopSearchEnter(event)" onfocus="showDesktopSearchResults()">
+                    <img src="https://media.baltaanay.org/web/image/793-902e5b33/Search%20%282%29.png" alt="Buscar" class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4" loading="lazy">
+                </div>
+                <div class="desktop-search-results" id="desktopSearchResults">
+                    <div id="desktopSearchResultsContent"></div>
+                </div>
+                <a href="/my/home" class="text-sm font-bold text-gray-400 hover:text-white">Iniciar sesión</a>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <button onclick="toggleMobileSearch()" class="lg:hidden text-gray-400 hover:text-white">
+                    <img src="https://media.baltaanay.org/web/image/793-902e5b33/Search%20%282%29.png" alt="Buscar" class="w-5 h-5" loading="lazy">
+                </button>
+                <a href="/novedades" class="relative text-gray-400 hover:text-white">
+                    <img src="https://media.baltaanay.org/web/image/796-aee658de/Explore.png" alt="Notificaciones" class="w-5 h-5" loading="lazy">
+                    <span class="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+                </a>
+                <a href="/my/home" class="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full overflow-hidden">
+                    <img src="https://media.baltaanay.org/web/image/793-902e5b33/Search%20%282%29.png" alt="Usuario" class="w-full h-full object-cover" loading="lazy">
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <div id="mobileSearchBar" class="lg:hidden bg-[#050505] p-4 border-b border-white/10">
+        <div class="flex items-center gap-3">
+            <img src="https://media.baltaanay.org/web/image/793-902e5b33/Search%20%282%29.png" alt="Buscar" class="w-5 h-5" loading="lazy">
+            <input type="text" id="mobileSearchInput" placeholder="Buscar episodios, series..." class="flex-1 bg-transparent border-none text-white text-lg focus:outline-none placeholder-gray-500" oninput="handleMobileSearchInput(this.value)" onkeypress="if(event.key === 'Enter') handleMobileSearchEnter(event)">
+            <button onclick="handleMobileSearchButton()" class="text-white px-3 py-1 bg-blue-600 rounded-md text-sm">Buscar</button>
+            <button onclick="toggleMobileSearch()" class="text-white text-xl">×</button>
+        </div>
+        <div id="mobileSearchResults" class="mt-4 max-h-[60vh] overflow-y-auto"></div>
     </div>
-  </header>
 
-  <main class="max-w-[1600px] mx-auto px-6 mt-8">
-    <h1 class="text-3xl font-bold mb-6">Bienvenido</h1>
-    <p id="status">Inicializando aplicación...</p>
-
-    <div id="feed-view" class="mt-8">
-      <!-- Aquí aparecerá el feed cuando app.js funcione -->
+    <div class="sticky top-0 z-40 bg-[#050505]/95 backdrop-blur-xl border-b border-white/5" id="category-filters">
+        <div class="py-3 overflow-x-auto no-scrollbar">
+            <div class="max-w-[1600px] mx-auto px-6 flex items-center gap-3" id="category-pills"></div>
+        </div>
     </div>
-  </main>
 
-  <!-- Enlace al JavaScript externo -->
-  <script type="module" src="./js/app.js"></script>
+    <main class="max-w-[1600px] mx-auto px-6 mt-4 min-h-screen">
+        <div id="feed-view" class="space-y-12 transition-opacity duration-300">
+            <!-- Aquí se renderizarán los carruseles -->
+        </div>
+        <div id="grid-view" class="hidden transition-opacity duration-300">
+            <div class="flex items-center justify-between mb-8 mt-6">
+                <h2 id="grid-title" class="text-2xl font-bold">Resultados</h2>
+                <button onclick="showFeed()" class="text-sm font-bold text-gray-400 hover:text-white flex items-center gap-1">
+                    <span class="text-xl">×</span> Cerrar búsqueda
+                </button>
+            </div>
+            <div id="results-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6"></div>
+            <div id="empty-state" class="hidden py-10 text-center">
+                <p class="text-gray-400 text-lg mb-8" id="empty-msg">No encontramos nada...</p>
+                <h3 class="text-xl font-bold mb-6 text-white">Quizás te interese esto:</h3>
+                <div id="recommendations-grid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6"></div>
+            </div>
+        </div>
+    </main>
 
+    <script type="module" src="./js/app.js"></script>
 </body>
 </html>
