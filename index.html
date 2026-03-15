@@ -1,184 +1,378 @@
 <!DOCTYPE html>
-<html lang="es" class="dark">
+<html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>StreamHub - Ultimate Feed</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <title>Balta Media · Conocimiento en acción</title>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Fuentes -->
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&display=swap" rel="stylesheet">
-
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" sizes="32x32" href="https://media.baltaanay.org/web/image/885-f3d79ca9/xhbalta-aula.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="https://media.baltaanay.org/web/image/885-f3d79ca9/xhbalta-aula.png">
+    <!-- Estilos personalizados -->
+    <link rel="stylesheet" href="/styles.css">
+    
+    <!-- ESTILOS BASE - LAYOUT PERFECTO CON GRID -->
     <style>
-        body { font-family: 'Plus Jakarta Sans', sans-serif; background: #050505; color: white; overflow-x: hidden; }
-
-        /* Utilidades */
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-
-        /* --- BOTONES DE CONTROL CARRUSEL --- */
-        .nav-btn {
-            position: absolute; top: 0; bottom: 0; z-index: 40; width: 60px;
-            display: none; align-items: center; justify-content: center;
-            transition: opacity 0.3s;
+        /* Reset */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
         }
-        .nav-btn.left { left: 0; background: linear-gradient(to right, #050505 0%, transparent 100%); }
-        .nav-btn.right { right: 0; background: linear-gradient(to left, #050505 0%, transparent 100%); }
-        .nav-btn button {
-            background: rgba(255,255,255,0.1); backdrop-filter: blur(10px);
-            border-radius: 50%; width: 40px; height: 40px; border: 1px solid rgba(255,255,255,0.1);
-            color: white; font-size: 20px; transition: transform 0.2s, background 0.2s;
+        
+        html, body {
+            width: 100%;
+            overflow-x: hidden;
         }
-        .nav-btn button:hover { background: rgba(255,255,255,0.3); transform: scale(1.1); }
-        @media (min-width: 1024px) { .carousel-wrapper:hover .nav-btn { display: flex; } }
-
-        /* --- ESTILOS DE TARJETAS (FEED) --- */
-        .card-std { min-width: 200px; width: 200px; display: flex; flex-direction: column; gap: 10px; cursor: pointer; position: relative; }
-        .card-video {
-            height: 220px; width: 220px; flex-shrink: 0; position: relative; overflow: hidden; border-radius: 12px;
-            transition: width 0.5s cubic-bezier(0.25, 1, 0.5, 1); cursor: pointer;
+        
+        body {
+            min-height: 100vh;
+            background: #050505;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            color: white;
+            display: grid;
+            grid-template-columns: auto 1fr; /* Sidebar automática, contenido 1fr */
+            grid-template-rows: auto auto 1fr; /* Header, categorías, main */
+            grid-template-areas: 
+                "sidebar header"
+                "sidebar categories"
+                "sidebar content";
         }
-        @media (min-width: 1024px) { .card-video:hover { width: 390px; } }
-        .card-list-group { min-width: 340px; display: flex; flex-direction: column; gap: 16px; }
-        .list-item { display: flex; align-items: center; gap: 12px; padding: 6px; border-radius: 8px; transition: background 0.2s; cursor: pointer; }
-        .list-item:hover { background: rgba(255,255,255,0.08); }
 
-        /* --- INTERACCIÓN --- */
-        .overlay-full {
-            position: absolute; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px);
-            opacity: 0; transition: opacity 0.3s; display: flex; align-items: center; justify-content: center; gap: 12px; border-radius: 12px;
+        /* Sidebar */
+        .sidebar-desktop {
+            grid-area: sidebar;
+            background: #0F0F0F;
+            color: #fff;
+            z-index: 900;
+            overflow-y: auto;
+            overflow-x: hidden;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.5);
+            transition: width 0.3s ease;
+            width: 70px; /* Colapsado */
+            min-width: 70px;
         }
-        .group:hover .overlay-full { opacity: 1; }
-        .overlay-mini {
-            position: absolute; inset: 0; background: rgba(0,0,0,0.4); opacity: 0; transition: opacity 0.2s;
-            display: flex; align-items: center; justify-content: center; border-radius: 4px;
+        .sidebar-desktop.expanded {
+            width: 15%;
+            min-width: 180px;
         }
-        .list-item:hover .overlay-mini { opacity: 1; }
-
-        /* Iconos */
-        .action-icon { width: 36px; height: 36px; transition: transform 0.2s, opacity 0.3s; cursor: pointer; pointer-events: auto; }
-        .action-icon:hover { transform: scale(1.15); }
-        .play-icon-lg { width: 56px; height: 56px; transition: transform 0.2s; cursor: pointer; pointer-events: auto; }
-        .play-icon-lg:hover { transform: scale(1.1); }
-        .play-icon-sm { width: 28px; height: 28px; pointer-events: auto; }
-
-        /* Grid View Card */
-        .grid-card { width: 100%; display: flex; flex-direction: column; gap: 10px; cursor: pointer; position: relative; }
-        .grid-card .aspect-square { border-radius: 12px; overflow: hidden; position: relative; }
-
-        /* BÚSQUEDA MEJORADA PARA DESKTOP */
-        .desktop-search-container { position: relative; }
-        .desktop-search-results {
-            position: absolute; top: 100%; left: 0; right: 0;
-            background: rgba(10, 10, 10, 0.98); backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px;
-            margin-top: 8px; padding: 12px; max-height: 400px; overflow-y: auto;
-            z-index: 1000; display: none; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        .sidebar-desktop::-webkit-scrollbar {
+            display: none;
         }
-        .desktop-search-results.active { display: block; animation: fadeIn 0.2s ease; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
-        .search-result-item { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
-        .search-result-item:hover { background: rgba(255, 255, 255, 0.1); }
-
-        /* BOTÓN PLAY PARA MÓVIL */
-        .mobile-play-button {
-            position: absolute; bottom: 8px; right: 8px; width: 32px; height: 32px;
-            background: rgba(0, 0, 0, 0.7); border-radius: 50%; display: flex;
-            align-items: center; justify-content: center; z-index: 30; pointer-events: auto;
+        @media (max-width: 768px) {
+            .sidebar-desktop {
+                display: none !important;
+            }
         }
-        @media (min-width: 1024px) { .mobile-play-button { display: none; } }
 
-        /* Búsqueda móvil mejorada */
-        #mobileSearchBar {
-            position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
-            transform: translateY(-100%); transition: transform 0.3s ease;
+        /* Header */
+        #main-header {
+            grid-area: header;
+            position: sticky;
+            top: 0;
+            background: rgba(5,5,5,0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            z-index: 50;
+            width: 100%; /* Ocupa todo el ancho de su celda */
         }
-        #mobileSearchBar.open { transform: translateY(0); }
-        .search-overlay {
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(8px);
-            z-index: 9998; opacity: 0; visibility: hidden;
-            transition: opacity 0.3s ease, visibility 0.3s ease;
+        #main-header > div {
+            padding: 0.75rem 1rem;
         }
-        .search-overlay.active { opacity: 1; visibility: visible; }
 
-        /* Móvil Disable Hovers */
-        @media (max-width: 1023px) {
-            .overlay-full, .overlay-mini, .nav-btn { display: none !important; }
+        /* Barra de categorías */
+        #category-filters {
+            grid-area: categories;
+            position: sticky;
+            top: 0;
+            background: rgba(5,5,5,0.95);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            z-index: 40;
+            width: 100%;
+        }
+        #category-filters > div {
+            padding: 0.5rem 1rem;
+        }
+
+        /* Contenido principal */
+        #content {
+            grid-area: content;
+            width: 100%; /* Ocupa todo el ancho de su celda */
+            min-height: 100vh;
+            /* El padding se lo dan los hijos, no este contenedor */
+        }
+
+        /* En móviles, una sola columna */
+        @media (max-width: 768px) {
+            body {
+                grid-template-columns: 1fr;
+                grid-template-areas: 
+                    "header"
+                    "categories"
+                    "content";
+            }
+        }
+
+        /* Estilos para los carruseles (se mantienen, pero ajustamos el padding) */
+        .carousel-scroll {
+            padding-left: 1rem;
+            padding-right: 1rem;
+            scroll-padding-left: 1rem;
+            scroll-padding-right: 1rem;
+        }
+
+        /* Para que los elementos dentro de #content tengan padding si es necesario */
+        .content-padded {
+            padding-left: 1rem;
+            padding-right: 1rem;
         }
     </style>
 </head>
 <body>
 
-    <div class="search-overlay" id="searchOverlay" onclick="closeSearch()"></div>
-
-    <header id="top-header" class="sticky top-0 z-50 bg-[#050505]/80 backdrop-blur-xl border-b border-white/5">
-        <div class="max-w-[1600px] mx-auto px-6 py-4 flex items-center justify-between" id="header-container">
-            <a href="/" class="flex items-center gap-2">
-                <img src="https://media.baltaanay.org/web/image/885-f3d79ca9/xhbalta-aula.png" alt="StreamHub Logo" class="w-8 h-8 rounded-lg object-cover" loading="lazy">
-                <span class="text-xl font-bold text-white">Media</span>
+<!-- Header principal -->
+<header id="main-header">
+    <div class="flex items-center justify-between">
+        <a href="/" class="flex items-center gap-2" data-link>
+            <img src="https://media.baltaanay.org/web/image/885-f3d79ca9/xhbalta-aula.png" alt="Balta Media" class="w-6 h-6 sm:w-8 sm:h-8 rounded-lg object-cover" loading="lazy">
+            <span class="text-lg sm:text-xl font-bold text-white">Balta Media</span>
+        </a>
+        <div class="flex items-center gap-3 sm:gap-4">
+            <a href="/novedades" class="relative text-gray-400 hover:text-white" data-link>
+                <img src="https://media.baltaanay.org/web/image/796-aee658de/Explore.png" alt="Novedades" class="w-5 h-5" loading="lazy">
+                <span class="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full"></span>
             </a>
-
-            <div class="hidden lg:flex items-center gap-4 desktop-search-container">
-                <div class="relative">
-                    <input type="text" id="desktopSearch" placeholder="Buscar episodios, series..." class="bg-white/10 border border-white/20 rounded-full px-4 py-2 pl-10 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-500" oninput="handleDesktopSearchInput(this.value)" onkeypress="if(event.key === 'Enter') handleDesktopSearchEnter(event)" onfocus="showDesktopSearchResults()">
-                    <img src="https://media.baltaanay.org/web/image/793-902e5b33/Search%20%282%29.png" alt="Buscar" class="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4" loading="lazy">
-                </div>
-                <div class="desktop-search-results" id="desktopSearchResults">
-                    <div id="desktopSearchResultsContent"></div>
-                </div>
-                <a href="/my/home" class="text-sm font-bold text-gray-400 hover:text-white">Iniciar sesión</a>
-            </div>
-
-            <div class="flex items-center gap-4">
-                <button onclick="toggleMobileSearch()" class="lg:hidden text-gray-400 hover:text-white">
-                    <img src="https://media.baltaanay.org/web/image/793-902e5b33/Search%20%282%29.png" alt="Buscar" class="w-5 h-5" loading="lazy">
-                </button>
-                <a href="/novedades" class="relative text-gray-400 hover:text-white">
-                    <img src="https://media.baltaanay.org/web/image/796-aee658de/Explore.png" alt="Notificaciones" class="w-5 h-5" loading="lazy">
-                    <span class="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full"></span>
-                </a>
-                <a href="/my/home" class="w-8 h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full overflow-hidden">
-                    <img src="https://media.baltaanay.org/web/image/793-902e5b33/Search%20%282%29.png" alt="Usuario" class="w-full h-full object-cover" loading="lazy">
-                </a>
-            </div>
-        </div>
-    </header>
-
-    <div id="mobileSearchBar" class="lg:hidden bg-[#050505] p-4 border-b border-white/10">
-        <div class="flex items-center gap-3">
-            <img src="https://media.baltaanay.org/web/image/793-902e5b33/Search%20%282%29.png" alt="Buscar" class="w-5 h-5" loading="lazy">
-            <input type="text" id="mobileSearchInput" placeholder="Buscar episodios, series..." class="flex-1 bg-transparent border-none text-white text-lg focus:outline-none placeholder-gray-500" oninput="handleMobileSearchInput(this.value)" onkeypress="if(event.key === 'Enter') handleMobileSearchEnter(event)">
-            <button onclick="handleMobileSearchButton()" class="text-white px-3 py-1 bg-blue-600 rounded-md text-sm">Buscar</button>
-            <button onclick="toggleMobileSearch()" class="text-white text-xl">×</button>
-        </div>
-        <div id="mobileSearchResults" class="mt-4 max-h-[60vh] overflow-y-auto"></div>
-    </div>
-
-    <div class="sticky top-0 z-40 bg-[#050505]/95 backdrop-blur-xl border-b border-white/5" id="category-filters">
-        <div class="py-3 overflow-x-auto no-scrollbar">
-            <div class="max-w-[1600px] mx-auto px-6 flex items-center gap-3" id="category-pills"></div>
+            <a href="/my/home" class="w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-br from-blue-400 to-purple-500 rounded-full overflow-hidden" data-link>
+                <img src="https://media.baltaanay.org/web/image/793-902e5b33/Search%20%282%29.png" alt="Usuario" class="w-full h-full object-cover" loading="lazy">
+            </a>
         </div>
     </div>
+</header>
 
-    <main class="max-w-[1600px] mx-auto px-6 mt-4 min-h-screen">
-        <div id="feed-view" class="space-y-12 transition-opacity duration-300">
-            <!-- Aquí se renderizarán los carruseles -->
+<!-- Barra de categorías -->
+<div id="category-filters">
+    <div class="overflow-x-auto no-scrollbar">
+        <div class="flex items-center gap-2 sm:gap-3" id="category-pills"></div>
+    </div>
+</div>
+
+<!-- Contenedor principal -->
+<main id="content">
+    <!-- Aquí se inyecta el contenido dinámico -->
+</main>
+
+<!-- Modal de error (sin cambios) -->
+<div id="errorModal" class="fixed inset-0 z-[10000] flex items-center justify-center hidden" style="background: rgba(0,0,0,0.8); backdrop-filter: blur(4px);">
+    <div class="bg-[#1e1e2f] rounded-2xl max-w-md w-full p-6 border border-white/10 shadow-2xl">
+        <h3 class="text-xl font-bold text-white mb-3" id="errorModalTitle">Error</h3>
+        <p class="text-gray-300 mb-6" id="errorModalMessage"></p>
+        <div class="flex flex-col sm:flex-row gap-3 justify-end">
+            <a href="https://www.baltaanay.org/contactus" target="_blank" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-white text-sm font-semibold text-center">Reportar problema</a>
+            <a href="https://www.baltaanay.org/solicitar" target="_blank" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-white text-sm font-semibold text-center">Solicitar</a>
+            <button id="closeErrorModal" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-white text-sm font-semibold">Cerrar</button>
         </div>
-        <div id="grid-view" class="hidden transition-opacity duration-300">
-            <div class="flex items-center justify-between mb-8 mt-6">
-                <h2 id="grid-title" class="text-2xl font-bold">Resultados</h2>
-                <button onclick="showFeed()" class="text-sm font-bold text-gray-400 hover:text-white flex items-center gap-1">
-                    <span class="text-xl">×</span> Cerrar búsqueda
+    </div>
+</div>
+
+<!-- Botón flotante móvil -->
+<button id="openPlayerBtn" onclick="window.togglePlayer ? window.togglePlayer() : window.updatePlayerVisibility?.(true)" 
+        class="fixed bottom-20 right-4 z-[1002] bg-[#7b2eda] rounded-full p-3 shadow-lg flex items-center gap-2 lg:hidden">
+    <img src="https://nikichitonjes-home.odoo.com/web/image/478-0e3df8d3/reanudar.gif" alt="Reproductor" class="w-6 h-6">
+    <span class="text-sm font-bold">Escuchar</span>
+</button>
+
+<!-- Script de la barra lateral (simplificado, sin ajustes de layout manual) -->
+<script>
+(function() {
+    const SIDEBAR_CONFIG = { BREAKPOINT: 768 };
+    let sidebarInstance = {
+        currentState: localStorage.getItem('sidebar_state') || 'collapsed',
+        isMobile: window.innerWidth <= SIDEBAR_CONFIG.BREAKPOINT
+    };
+
+    function getRecommendations() {
+        try { return window.RECOMENDADOS || []; } catch (e) { return []; }
+    }
+
+    function renderSidebar() {
+        const sidebar = document.createElement('aside');
+        sidebar.className = `sidebar-desktop ${sidebarInstance.currentState}`;
+        sidebar.id = 'sidebarDesktop';
+
+        const toggle = document.createElement('div');
+        toggle.className = 'sidebar-toggle';
+        toggle.id = 'sidebarDesktopToggle';
+        toggle.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>';
+
+        const nav = document.createElement('div');
+        nav.className = 'sidebar-nav';
+        nav.innerHTML = `
+            <a href="/" class="sidebar-nav-item" title="Home" data-link>
+                <img src="https://media.baltaanay.org/web/image/798-1b947c8d/Home%20%282%29.webp" alt="Home" loading="lazy"><span>Home</span>
+            </a>
+            <a href="/buscar" class="sidebar-nav-item" title="Explorar" data-link>
+                <img src="https://www.baltaanay.org/web/image/986-2bf9d2bb/Search%20%282%29.webp" alt="Explorar" loading="lazy"><span>Explorar</span>
+            </a>
+            <a href="/subir" class="sidebar-nav-item" title="Cargar" data-link>
+                <img src="https://www.baltaanay.org/web/image/991-1c3c204a/subir.webp" alt="Cargar" loading="lazy"><span>Cargar</span>
+            </a>
+            <a href="https://www.baltaanay.org/solicitud" class="sidebar-nav-item" title="Solicitar">
+                <img src="https://www.baltaanay.org/web/image/922-f3d79ca9/xhbalta-aula.png" alt="Solicitar" loading="lazy"><span>Solicitar</span>
+            </a>
+            <a href="/my/home" class="sidebar-nav-item" title="Usuario" data-link>
+                <img src="https://nikichitonjesus3.odoo.com/web/image/453-f4d8c1eb/user.png" alt="Usuario" loading="lazy"><span>Portal</span>
+            </a>
+        `;
+
+        const recSection = document.createElement('div');
+        recSection.className = 'sidebar-rec-section';
+        recSection.innerHTML = `
+            <div class="sidebar-rec-header">
+                <a href="/novedades" data-link>Recomendados<svg viewBox="0 0 24 24"><path d="M14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg></a>
+            </div>
+            <div class="sidebar-rec-list" id="sidebarRecList"></div>
+        `;
+
+        sidebar.appendChild(toggle);
+        sidebar.appendChild(nav);
+        sidebar.appendChild(recSection);
+        return sidebar;
+    }
+
+    function populateRecommendations() {
+        const container = document.getElementById('sidebarRecList');
+        if (!container) return;
+        const episodes = getRecommendations();
+        if (!episodes.length) {
+            container.innerHTML = '<div style="color:#aaa; padding:8px;">No hay recomendados</div>';
+            return;
+        }
+        container.innerHTML = '';
+        episodes.forEach(ep => {
+            const title = ep.title || 'Sin título';
+            const author = ep.author || (ep.series?.titulo_serie) || 'Desconocido';
+            const item = document.createElement('div');
+            item.className = 'sidebar-rec-item';
+            item.innerHTML = `
+                <div class="sidebar-rec-item-info">
+                    <div class="sidebar-rec-item-title">${title}</div>
+                    <div class="sidebar-rec-item-author">${author}</div>
+                </div>
+                <button class="sidebar-rec-play-btn" data-episode='${JSON.stringify(ep).replace(/'/g, "&#39;")}'>
+                    <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
                 </button>
-            </div>
-            <div id="results-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6"></div>
-            <div id="empty-state" class="hidden py-10 text-center">
-                <p class="text-gray-400 text-lg mb-8" id="empty-msg">No encontramos nada...</p>
-                <h3 class="text-xl font-bold mb-6 text-white">Quizás te interese esto:</h3>
-                <div id="recommendations-grid" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6"></div>
-            </div>
-        </div>
-    </main>
+            `;
+            const btn = item.querySelector('.sidebar-rec-play-btn');
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const epData = JSON.parse(btn.dataset.episode);
+                if (typeof window.playEpisodeExpanded === 'function') {
+                    window.playEpisodeExpanded(
+                        epData.mediaUrl || '',
+                        epData.type || 'audio',
+                        epData.coverUrl || '',
+                        epData.series?.portada_serie || epData.coverUrl || '',
+                        epData.title || '',
+                        epData.detailUrl || '',
+                        epData.author || (epData.series?.titulo_serie) || 'Roberto',
+                        epData.next || [],
+                        epData.description || '',
+                        true
+                    );
+                }
+            });
+            container.appendChild(item);
+        });
+    }
 
-    <script type="module" src="./js/app.js"></script>
+    function setActiveNavItem() {
+        const currentPath = window.location.pathname;
+        document.querySelectorAll('.sidebar-nav-item').forEach(item => {
+            const href = item.getAttribute('href');
+            item.classList.toggle('active', 
+                (href === currentPath) || 
+                (href === '/' && currentPath === '/') ||
+                (href === '/buscar' && currentPath === '/buscar')
+            );
+        });
+    }
+
+    function initSidebarToggle() {
+        const sidebar = document.getElementById('sidebarDesktop');
+        const toggle = document.getElementById('sidebarDesktopToggle');
+        if (!sidebar || !toggle) return;
+        const newToggle = toggle.cloneNode(true);
+        toggle.parentNode.replaceChild(newToggle, toggle);
+        newToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            if (isCollapsed) {
+                sidebar.classList.remove('collapsed');
+                sidebar.classList.add('expanded');
+            } else {
+                sidebar.classList.add('collapsed');
+                sidebar.classList.remove('expanded');
+            }
+            localStorage.setItem('sidebar_state', isCollapsed ? 'expanded' : 'collapsed');
+        });
+    }
+
+    function initSidebar() {
+        sidebarInstance.isMobile = window.innerWidth <= SIDEBAR_CONFIG.BREAKPOINT;
+        const oldSidebar = document.querySelector('.sidebar-desktop');
+        if (oldSidebar) oldSidebar.remove();
+        if (sidebarInstance.isMobile) return;
+        const sidebar = renderSidebar();
+        document.body.insertBefore(sidebar, document.body.firstChild);
+        populateRecommendations();
+        initSidebarToggle();
+        setActiveNavItem();
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initSidebar);
+    } else {
+        initSidebar();
+    }
+
+    window.addEventListener('resize', () => {
+        const wasMobile = sidebarInstance.isMobile;
+        const isMobileNow = window.innerWidth <= SIDEBAR_CONFIG.BREAKPOINT;
+        if (wasMobile !== isMobileNow) {
+            sidebarInstance.isMobile = isMobileNow;
+            initSidebar();
+        }
+    });
+
+    document.addEventListener('spa-navigation', setActiveNavItem);
+    window.addEventListener('popstate', setActiveNavItem);
+
+    window.sidebarAPI = {
+        refresh: populateRecommendations,
+        setActive: setActiveNavItem,
+        toggle: () => {
+            const sidebar = document.getElementById('sidebarDesktop');
+            if (sidebar) {
+                const isCollapsed = sidebar.classList.contains('collapsed');
+                if (isCollapsed) {
+                    sidebar.classList.remove('collapsed');
+                    sidebar.classList.add('expanded');
+                } else {
+                    sidebar.classList.add('collapsed');
+                    sidebar.classList.remove('expanded');
+                }
+                localStorage.setItem('sidebar_state', isCollapsed ? 'expanded' : 'collapsed');
+            }
+        }
+    };
+})();
+</script>
+
+<script type="module" src="/main.js"></script>
 </body>
 </html>
