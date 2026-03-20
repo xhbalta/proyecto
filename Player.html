@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Reproductor Multimedia Profesional</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0,1" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { font-family: 'Inter', sans-serif; }
+    .volume-hover:hover .volume-slider { width: 80px; opacity: 1; }
+    .volume-slider { width: 0; opacity: 0; transition: all 0.2s; }
+    .progress-thumb { opacity: 0; transition: opacity 0.2s; }
+    .progress-container:hover .progress-thumb { opacity: 1; }
+    .glass { backdrop-filter: blur(16px); background: rgba(0,0,0,0.3); }
+    .glass-dark { backdrop-filter: blur(20px); background: rgba(16,28,34,0.9); }
+    .seek-indicator { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.7); color: white; padding: 0.5rem 1rem; border-radius: 2rem; display: flex; align-items: center; gap: 0.5rem; z-index: 60; pointer-events: none; opacity: 0; transition: opacity 0.2s; }
+    .seek-indicator.show { opacity: 1; }
+    .lyrics-container { height: 100%; overflow-y: auto; white-space: pre-line; line-height: 1.6; }
+    .lyrics-line { padding: 0.25rem 0; transition: all 0.2s; }
+    .lyrics-line.active { color: #0da6f2; font-weight: 600; transform: scale(1.02); }
+    .subtitles-overlay { position: absolute; bottom: 20px; left: 0; right: 0; text-align: center; pointer-events: none; color: white; text-shadow: 0 0 8px black; font-size: 1.2rem; background: rgba(0,0,0,0.5); padding: 0.5rem; border-radius: 8px; max-width: 80%; margin: 0 auto; }
+    /* Carrusel de velocidad */
+    .speed-carousel { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
+    .speed-carousel::-webkit-scrollbar { display: none; }
+    .speed-tick { flex: 0 0 20px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; scroll-snap-align: center; cursor: pointer; }
+    .speed-tick .line { width: 1px; background: #b3b3b3; }
+    .speed-tick.major .line { height: 20px; }
+    .speed-tick.minor .line { height: 10px; }
+    .speed-tick span { margin-top: 5px; font-size: 10px; }
+    .speed-pointer { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 12px solid #0da6f2; z-index: 1; }
+    /* Mobile styles */
+    @media (max-width: 768px) {
+      .desktop-only { display: none !important; }
+      .mobile-only { display: flex !important; }
+    }
+    @media (min-width: 769px) {
+      .desktop-only { display: flex !important; }
+      .mobile-only { display: none !important; }
+    }
+    .mobile-panel {
+      position: fixed;
+      inset: 0;
+      background: #101c22;
+      z-index: 100;
+      transform: translateY(100%);
+      transition: transform 0.3s ease;
+    }
+    .mobile-panel.open { transform: translateY(0); }
+    .mobile-bottom-sheet {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #1e293b;
+      border-radius: 1rem 1rem 0 0;
+      transform: translateY(100%);
+      transition: transform 0.3s ease;
+      z-index: 200;
+    }
+    .mobile-bottom-sheet.open { transform: translateY(0); }
+    .drag-handle {
+      width: 40px;
+      height: 4px;
+      background: #5f6b7a;
+      border-radius: 2px;
+      margin: 8px auto;
+    }
+  </style>
+</head>
+<body class="bg-[#101c22] text-white min-h-screen flex flex-col relative overflow-hidden">
+  <div id="player-root" class="relative flex-1 flex flex-col"></div>
+
+  <script>
+    (function() {
+      // ---------- ESTADO GLOBAL DEL REPRODUCTOR ----------
+      const PlayerState = {
+        mode: 'minimized',        // minimized, popout-video, popout-audio, fullscreen, mobile-minimized, mobile-expanded
+        episode: null,
+        playlist: [],
+        history: [],
+        favorites: [],
+        savedList: [],
+        currentTime: 0,
+        duration: 0,
+        paused: true,
+        volume: 0.7,
+        speed: 1.0,               // corregido a 1.0 por defecto
+        repeat: 'off',
+        shuffle: false,
+        timer: null,              // { endTime: timestamp, type: 'countdown'|'end', baseTime: ... } para 'end' usamos duración
+        panelOpen: false,
+        panelTab: 'queue',
+        subtitlesEnabled: false,
+        subtitlesTrack: null,
+        lyricsLines: [],
+        activeLyricIndex: -1,
+        isMobile: window.innerWidth <= 768,
+        seekAccumulator: { left: 0, right: 0, timeout: null }
+      };
+
+      // ---------- EPISODIO POR DEFECTO ----------
+      const defaultEpisode = {
+        id: 'ep_default',
+        title: 'El futuro de la IA generativa',
+        author: 'Tech Podcast',
+        cover: 'https://picsum.photos/400/400?random=1',
+        mp3: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+        mp4: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+        description: 'Exploramos cómo la inteligencia artificial está transformando el diseño y la creatividad.',
+        detailsUrl: '#',
+        subtitlesUrl: '',
+        gender: 'podcast',         // music, podcast, false
+        serie: { title: 'Tech Talks', cover: '', episodes: [] }
+      };
+
+      // ---------- UTILIDADES ----------
+      function formatTime(sec) {
+        if (isNaN(sec) || sec === Infinity) return '0:00';
+        const h = Math.floor(sec / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        const s = Math.floor(sec % 60);
+        if (h > 0) return `${h}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+        return `${m}:${s.toString().padStart(2,'0')}`;
+      }
+
+      function getDynamicColor(imgUrl) {
+        return 'linear-gradient(135deg, #0da6f2 0%, #101c22 80%)';
+      }
+
+      // ---------- PERSISTENCIA ----------
+      function saveState() {
+        const toSave = {
+          episode: PlayerState.episode,
+          currentTime: PlayerState.currentTime,
+          paused: PlayerState.paused,
+          volume: PlayerState.volume,
+          speed: PlayerState.speed,
+          repeat: PlayerState.repeat,
+          shuffle: PlayerState.shuffle,
+          favorites: PlayerState.favorites,
+          savedList: PlayerState.savedList,
+          history: PlayerState.history.slice(-50),
+        };
+        localStorage.setItem('playerState', JSON.stringify(toSave));
+      }
+
+      function loadState() {
+        const saved = localStorage.getItem('playerState');
+        if (saved) {
+          try {
+            const data = JSON.parse(saved);
+            PlayerState.episode = data.episode || defaultEpisode;
+            PlayerState.currentTime = data.currentTime || 0;
+            PlayerState.paused = data.paused !== undefined ? data.paused : true;
+            PlayerState.volume = data.volume || 0.7;
+            PlayerState.speed = data.speed || 1.0;
+            PlayerState.repeat = data.repeat || 'off';
+            PlayerState.shuffle = data.shuffle || false;
+            PlayerState.favorites = data.favorites || [];
+            PlayerState.savedList = data.savedList || [];
+            PlayerState.history = data.history || [];
+          } catch (e) {}
+        } else {
+          PlayerState.episode = defaultEpisode;
+        }
+      }
+
+      // ---------- ELEMENTOS DE MEDIA ----------
+      let audioElement = new Audio();
+      let videoElement = document.createElement('video');
+      videoElement.playsInline = true;
+      videoElement.className = 'max-w-full max-h-full object-contain';
+      let fullscreenVideo = document.createElement('video');
+      fullscreenVideo.playsInline = true;
+      fullscreenVideo.className = 'w-full h-full object-contain';
+
+      function initMedia() {
+        audioElement.volume = PlayerState.volume;
+        audioElement.playbackRate = PlayerState.speed;
+        videoElement.volume = PlayerState.volume;
+        videoElement.playbackRate = PlayerState.speed;
+        fullscreenVideo.volume = PlayerState.volume;
+        fullscreenVideo.playbackRate = PlayerState.speed;
+        [audioElement, videoElement, fullscreenVideo].forEach(media => {
+          media.addEventListener('timeupdate', updateProgress);
+          media.addEventListener('durationchange', updateDuration);
+          media.addEventListener('ended', handleEnded);
+        });
+      }
+
+      function updateProgress() {
+        let media = getCurrentMedia();
+        if (!media) return;
+        PlayerState.currentTime = media.currentTime;
+        PlayerState.duration = media.duration;
+
+        // Actualizar barras de progreso en todas las vistas
+        document.querySelectorAll('.progress-fill').forEach(el => {
+          el.style.width = (media.currentTime / media.duration * 100) + '%';
+        });
+        document.querySelectorAll('.progress-time-current').forEach(el => el.innerText = formatTime(media.currentTime));
+        document.querySelectorAll('.progress-time-total').forEach(el => el.innerText = formatTime(media.duration));
+
+        // Actualizar letra activa
+        if (PlayerState.lyricsLines.length > 0) {
+          const idx = PlayerState.lyricsLines.findIndex(line => line.start <= media.currentTime && line.end > media.currentTime);
+          if (idx !== PlayerState.activeLyricIndex) {
+            PlayerState.activeLyricIndex = idx;
+            renderLyrics();
+            updateSubtitlesUI();
+          }
+        }
+
+        // Verificar temporizador de fin de episodio
+        if (PlayerState.timer && PlayerState.timer.type === 'end') {
+          if (media.currentTime >= PlayerState.duration) {
+            pause();
+            PlayerState.timer = null;
+            saveState();
+          }
+          // Actualizar display en el panel si está abierto
+          if (PlayerState.panelOpen && PlayerState.panelTab === 'timer') renderPanelContent('timer');
+        }
+      }
+
+      function updateDuration() {
+        let media = getCurrentMedia();
+        if (media) PlayerState.duration = media.duration;
+      }
+
+      function getCurrentMedia() {
+        if (PlayerState.mode === 'popout-video' || (PlayerState.isMobile && PlayerState.mode === 'mobile-expanded' && document.querySelector('#mobile-mode-video.active'))) return videoElement;
+        if (PlayerState.mode === 'fullscreen') return fullscreenVideo;
+        return audioElement;
+      }
+
+      function handleEnded() {
+        if (PlayerState.repeat === 'one') {
+          seekTo(0);
+          play();
+        } else if (PlayerState.repeat === 'all') {
+          next();
+        } else {
+          next();
+        }
+      }
+
+      // ---------- CONTROL DE REPRODUCCIÓN ----------
+      function play() {
+        let media = getCurrentMedia();
+        if (media) media.play();
+        PlayerState.paused = false;
+        updatePlayPauseIcons();
+        saveState();
+      }
+
+      function pause() {
+        let media = getCurrentMedia();
+        if (media) media.pause();
+        PlayerState.paused = true;
+        updatePlayPauseIcons();
+        saveState();
+      }
+
+      function togglePlay() {
+        PlayerState.paused ? play() : pause();
+      }
+
+      function seekTo(seconds) {
+        let media = getCurrentMedia();
+        if (media) media.currentTime = seconds;
+        PlayerState.currentTime = seconds;
+      }
+
+      // Acumulador para seek indicators
+      function seekBy(seconds) {
+        let media = getCurrentMedia();
+        if (!media) return;
+        const direction = seconds > 0 ? 'right' : 'left';
+        PlayerState.seekAccumulator[direction] += seconds;
+        // Mostrar indicador con el acumulado
+        const total = PlayerState.seekAccumulator[direction];
+        const indicatorId = direction === 'right' ? 'seek-indicator-right' : 'seek-indicator-left';
+        const valSpan = direction === 'right' ? document.getElementById('seek-value-right') : document.getElementById('seek-value');
+        if (valSpan) valSpan.innerText = Math.abs(total) + 's';
+        const ind = document.getElementById(indicatorId);
+        if (ind) {
+          ind.classList.add('show');
+          // Resetear después de 800ms
+          if (PlayerState.seekAccumulator.timeout) clearTimeout(PlayerState.seekAccumulator.timeout);
+          PlayerState.seekAccumulator.timeout = setTimeout(() => {
+            // Aplicar el acumulado
+            let newTime = media.currentTime + PlayerState.seekAccumulator.right + PlayerState.seekAccumulator.left;
+            if (newTime < 0) newTime = 0;
+            if (newTime > PlayerState.duration) newTime = PlayerState.duration;
+            seekTo(newTime);
+            PlayerState.seekAccumulator.left = 0;
+            PlayerState.seekAccumulator.right = 0;
+            ind.classList.remove('show');
+          }, 500);
+        }
+      }
+
+      function previous() {
+        if (PlayerState.history.length > 1) {
+          const prev = PlayerState.history[PlayerState.history.length - 2];
+          loadEpisode(prev);
+        } else {
+          seekTo(0);
+        }
+      }
+
+      function next() {
+        if (PlayerState.playlist.length > 0) {
+          const nextEp = PlayerState.playlist.shift();
+          loadEpisode(nextEp);
+        } else {
+          alert('No hay más episodios en la cola');
+        }
+      }
+
+      function loadEpisode(ep, autoplay = true) {
+        if (!ep) return;
+        if (PlayerState.episode && PlayerState.episode.id !== ep.id) {
+          PlayerState.history.push(PlayerState.episode);
+        }
+        PlayerState.episode = ep;
+        PlayerState.currentTime = 0;
+        PlayerState.duration = 0;
+        PlayerState.subtitlesEnabled = false;
+        PlayerState.lyricsLines = [];
+
+        if (ep.mp3) audioElement.src = ep.mp3;
+        if (ep.mp4) {
+          videoElement.src = ep.mp4;
+          fullscreenVideo.src = ep.mp4;
+        }
+
+        if (ep.subtitlesUrl) {
+          fetch(ep.subtitlesUrl)
+            .then(r => r.text())
+            .then(text => parseVTT(text))
+            .catch(() => console.warn('No se pudo cargar subtítulos'));
+        } else if (ep.gender === 'music') {
+          PlayerState.lyricsLines = [
+            { start: 0, end: 5, text: 'Esta es la primera línea de la canción...' },
+            { start: 5, end: 10, text: 'Esta es la segunda línea...' },
+          ];
+        } else if (ep.gender === 'podcast') {
+          PlayerState.lyricsLines = [
+            { start: 0, end: 8, text: 'Bienvenidos al episodio de hoy...' },
+            { start: 8, end: 15, text: 'Hoy hablaremos sobre...' },
+          ];
+        }
+
+        updateDynamicBackground(ep.cover);
+        updateMediaSession(ep);
+        if (autoplay) play();
+        saveState();
+      }
+
+      function parseVTT(vttText) {
+        const cues = [];
+        const lines = vttText.split('\n');
+        // Implementación básica - omitida por brevedad
+        PlayerState.lyricsLines = cues;
+      }
+
+      function updateMediaSession(ep) {
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: ep.title,
+            artist: ep.author,
+            album: ep.serie?.title || 'Podcast',
+            artwork: [{ src: ep.cover, sizes: '512x512', type: 'image/jpeg' }]
+          });
+          navigator.mediaSession.setActionHandler('play', play);
+          navigator.mediaSession.setActionHandler('pause', pause);
+          navigator.mediaSession.setActionHandler('previoustrack', previous);
+          navigator.mediaSession.setActionHandler('nexttrack', next);
+          navigator.mediaSession.setActionHandler('seekbackward', (d) => seekBy(-(d.seekOffset || 15)));
+          navigator.mediaSession.setActionHandler('seekforward', (d) => seekBy(d.seekOffset || 15));
+        }
+      }
+
+      function updatePlayPauseIcons() {
+        const icon = PlayerState.paused ? 'play_arrow' : 'pause';
+        document.querySelectorAll('.play-pause-icon').forEach(el => el.innerText = icon);
+      }
+
+      function updateDynamicBackground(coverUrl) {
+        const style = document.createElement('style');
+        style.innerHTML = `.dynamic-bg { background: ${getDynamicColor(coverUrl)}; }`;
+        document.head.appendChild(style);
+      }
+
+      // ---------- FAVORITOS Y LISTA GUARDADA ----------
+      function toggleFavorite() {
+        if (!PlayerState.episode) return;
+        const id = PlayerState.episode.id;
+        const idx = PlayerState.favorites.indexOf(id);
+        if (idx === -1) PlayerState.favorites.push(id);
+        else PlayerState.favorites.splice(idx, 1);
+        updateFavIcon();
+        saveState();
+      }
+
+      function toggleSavedList() {
+        if (!PlayerState.episode) return;
+        const ep = PlayerState.episode;
+        const idx = PlayerState.savedList.findIndex(e => e.id === ep.id);
+        if (idx === -1) PlayerState.savedList.push(ep);
+        else PlayerState.savedList.splice(idx, 1);
+        updateSavedIcon();
+        saveState();
+      }
+
+      function updateFavIcon() {
+        const isFav = PlayerState.favorites.includes(PlayerState.episode?.id);
+        document.querySelectorAll('.fav-icon').forEach(icon => {
+          icon.classList.toggle('text-red-500', isFav);
+          icon.classList.toggle('fill-1', isFav);
+        });
+      }
+
+      function updateSavedIcon() {
+        const isSaved = PlayerState.savedList.some(e => e.id === PlayerState.episode?.id);
+        document.querySelectorAll('.saved-icon').forEach(icon => {
+          icon.classList.toggle('text-yellow-500', isSaved);
+          icon.classList.toggle('fill-1', isSaved);
+        });
+      }
+
+      // ---------- TEMPORIZADOR ----------
+      function startTimer(minutes, type = 'countdown') {
+        let endTime;
+        if (type === 'end') {
+          PlayerState.timer = { type: 'end' };
+        } else {
+          endTime = Date.now() + minutes * 60 * 1000;
+          PlayerState.timer = { endTime, type };
+        }
+        saveState();
+        if (PlayerState.panelOpen && PlayerState.panelTab === 'timer') renderPanelContent('timer');
+      }
+
+      function cancelTimer() {
+        PlayerState.timer = null;
+        saveState();
+        if (PlayerState.panelOpen && PlayerState.panelTab === 'timer') renderPanelContent('timer');
+      }
+
+      function addFiveMinutes() {
+        if (PlayerState.timer && PlayerState.timer.type !== 'end') {
+          PlayerState.timer.endTime += 5 * 60 * 1000;
+          saveState();
+          if (PlayerState.panelOpen && PlayerState.panelTab === 'timer') renderPanelContent('timer');
+        }
+      }
+
+      // ---------- PANEL LATERAL (solo escritorio) ----------
+      function openPanel(tab) {
+        if (PlayerState.isMobile) {
+          openMobilePanel(tab);
+          return;
+        }
+        if (!PlayerState.mode.startsWith('popout')) {
+          if (PlayerState.episode?.mp4 && PlayerState.episode?.mp3) setMode('popout-video');
+          else if (PlayerState.episode?.mp4) setMode('popout-video');
+          else setMode('popout-audio');
+        }
+        PlayerState.panelOpen = true;
+        PlayerState.panelTab = tab;
+        applyPanelUI();
+        renderPanelContent(tab);
+      }
+
+      function closePanel() {
+        if (PlayerState.isMobile) {
+          closeMobilePanel();
+          return;
+        }
+        PlayerState.panelOpen = false;
+        document.getElementById('side-panel')?.style.setProperty('width', '0');
+        document.getElementById('media-content')?.classList.remove('w-3/5');
+      }
+
+      function togglePanel(tab) {
+        if (PlayerState.isMobile) {
+          toggleMobilePanel(tab);
+          return;
+        }
+        if (PlayerState.panelOpen && PlayerState.panelTab === tab) closePanel();
+        else openPanel(tab);
+      }
+
+      function applyPanelUI() {
+        const panel = document.getElementById('side-panel');
+        const media = document.getElementById('media-content');
+        if (panel && media) {
+          // En audio con subtítulos, queremos cover más pequeño (40%) y panel más grande (60%)
+          if (PlayerState.mode === 'popout-audio' && PlayerState.subtitlesEnabled && PlayerState.lyricsLines.length > 0) {
+            panel.style.width = '60%';
+            media.classList.add('w-2/5');
+            media.classList.remove('w-3/5');
+          } else {
+            panel.style.width = '40%';
+            media.classList.add('w-3/5');
+            media.classList.remove('w-2/5');
+          }
+        }
+      }
+
+      function renderPanelContent(tab) {
+        const contentDiv = document.getElementById('panel-content');
+        if (!contentDiv) return;
+
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+          const t = btn.dataset.panelTab;
+          btn.classList.toggle('text-primary', t === tab);
+          btn.classList.toggle('border-b-2', t === tab);
+        });
+
+        if (tab === 'queue') {
+          contentDiv.innerHTML = `<div class="text-slate-400">Aquí se mostrarán los episodios siguientes (simulado)</div>`;
+        } else if (tab === 'saved') {
+          contentDiv.innerHTML = `
+            <div class="text-sm font-medium mb-2">Favoritos (${PlayerState.favorites.length})</div>
+            <div class="text-slate-400">Lista de episodios guardados (simulado)</div>
+          `;
+        } else if (tab === 'info') {
+          const ep = PlayerState.episode;
+          if (ep.gender === 'music') {
+            let html = '<div class="lyrics-container">';
+            PlayerState.lyricsLines.forEach((line, idx) => {
+              html += `<div class="lyrics-line ${idx === PlayerState.activeLyricIndex ? 'active' : ''}">${line.text}</div>`;
+            });
+            html += '</div>';
+            contentDiv.innerHTML = html;
+          } else if (ep.gender === 'podcast') {
+            contentDiv.innerHTML = `<div class="lyrics-container">${PlayerState.lyricsLines.map(l => l.text).join('<br>')}</div>`;
+          } else {
+            contentDiv.innerHTML = `<div>${ep.description || 'Sin descripción'}</div>`;
+          }
+        } else if (tab === 'speed') {
+          contentDiv.innerHTML = `
+            <div class="p-2">
+              <h4 class="font-medium mb-4 text-center">Velocidad</h4>
+              <div class="relative">
+                <div class="speed-pointer"></div>
+                <div class="speed-carousel"></div>
+              </div>
+              <div class="flex justify-center gap-2 mt-6">
+                <button class="speed-preset w-10 h-10 rounded-full bg-slate-700 hover:bg-slate-600 text-sm" data-speed="1.0">1</button>
+                <button class="speed-preset w-10 h-10 rounded-full bg-slate-700 hover:bg-slate-600 text-sm" data-speed="1.2">1.2</button>
+                <button class="speed-preset w-10 h-10 rounded-full bg-slate-700 hover:bg-slate-600 text-sm" data-speed="1.5">1.5</button>
+                <button class="speed-preset w-10 h-10 rounded-full bg-slate-700 hover:bg-slate-600 text-sm" data-speed="1.8">1.8</button>
+                <button class="speed-preset w-10 h-10 rounded-full bg-slate-700 hover:bg-slate-600 text-sm" data-speed="2.0">2</button>
+              </div>
+            </div>
+          `;
+          initSpeedCarousel();
+        } else if (tab === 'timer') {
+          renderTimerPanel(contentDiv);
+        }
+      }
+
+      function renderTimerPanel(container) {
+        if (PlayerState.timer) {
+          let remaining;
+          if (PlayerState.timer.type === 'end') {
+            remaining = Math.max(0, PlayerState.duration - PlayerState.currentTime);
+          } else {
+            remaining = Math.max(0, (PlayerState.timer.endTime - Date.now()) / 1000);
+          }
+          container.innerHTML = `
+            <div class="text-center py-8">
+              <div class="text-5xl font-bold text-primary mb-6">${formatTime(remaining)}</div>
+              <button id="cancel-timer" class="bg-white text-black px-6 py-2 rounded-full font-medium mr-2">Desactivar</button>
+              ${PlayerState.timer.type !== 'end' ? '<button id="add5min" class="border border-white px-6 py-2 rounded-full font-medium">+5 min</button>' : ''}
+            </div>
+          `;
+          document.getElementById('cancel-timer')?.addEventListener('click', cancelTimer);
+          document.getElementById('add5min')?.addEventListener('click', addFiveMinutes);
+        } else {
+          container.innerHTML = `
+            <div class="p-2">
+              <h4 class="font-medium mb-4">Temporizador de apagado</h4>
+              <div class="space-y-2">
+                ${[5,10,15,30,45,60].map(m => `<button class="timer-option block w-full text-left p-3 bg-slate-800 rounded hover:bg-slate-700" data-min="${m}">${m} minutos</button>`).join('')}
+                <button class="timer-option block w-full text-left p-3 bg-slate-800 rounded hover:bg-slate-700" data-end="end">Fin del episodio</button>
+              </div>
+            </div>
+          `;
+          container.querySelectorAll('.timer-option').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const min = btn.dataset.min;
+              if (min) startTimer(parseInt(min), 'countdown');
+              else if (btn.dataset.end) startTimer(0, 'end');
+            });
+          });
+        }
+      }
+
+      function initSpeedCarousel() {
+        const container = document.querySelector('.speed-carousel');
+        if (!container) return;
+        container.innerHTML = '';
+        const minSpeed = 0.5;
+        const maxSpeed = 2.0;
+        const step = 0.05;
+        const numTicks = Math.round((maxSpeed - minSpeed) / step) + 1;
+        const tickWidth = 20;
+        let currentIndex = Math.round((PlayerState.speed - minSpeed) / step);
+
+        for (let i = 0; i < numTicks; i++) {
+          const speed = minSpeed + i * step;
+          const tick = document.createElement('div');
+          tick.className = 'speed-tick';
+          tick.dataset.index = i;
+          const line = document.createElement('div');
+          line.className = 'line';
+          tick.appendChild(line);
+          if (Math.abs(speed * 2 - Math.round(speed * 2)) < 0.01) {
+            tick.classList.add('major');
+            const span = document.createElement('span');
+            span.textContent = speed.toFixed(1);
+            tick.appendChild(span);
+          } else {
+            tick.classList.add('minor');
+          }
+          container.appendChild(tick);
+        }
+
+        const sliderContainer = container.parentElement;
+        const halfOffset = (sliderContainer.clientWidth / 2) - (tickWidth / 2);
+        container.style.paddingLeft = halfOffset + 'px';
+        container.style.paddingRight = halfOffset + 'px';
+        container.scrollLeft = currentIndex * tickWidth;
+
+        function updateSpeedFromScroll() {
+          const idx = Math.round(container.scrollLeft / tickWidth);
+          if (idx >= 0 && idx < numTicks) {
+            currentIndex = idx;
+            const speed = minSpeed + idx * step;
+            PlayerState.speed = speed;
+            audioElement.playbackRate = speed;
+            videoElement.playbackRate = speed;
+            fullscreenVideo.playbackRate = speed;
+            document.querySelectorAll('#speed-btn, #mobile-speed-btn').forEach(el => el.innerText = speed.toFixed(2) + 'x');
+            document.querySelectorAll('.speed-tick .line').forEach((line, i) => {
+              line.style.background = i === idx ? '#0da6f2' : '#b3b3b3';
+            });
+          }
+        }
+
+        container.addEventListener('scroll', () => {
+          requestAnimationFrame(updateSpeedFromScroll);
+        });
+
+        container.addEventListener('click', (e) => {
+          const tick = e.target.closest('.speed-tick');
+          if (tick) {
+            const idx = parseInt(tick.dataset.index);
+            container.scrollTo({ left: idx * tickWidth, behavior: 'smooth' });
+          }
+        });
+
+        document.querySelectorAll('.speed-preset').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const sp = parseFloat(btn.dataset.speed);
+            const idx = Math.round((sp - minSpeed) / step);
+            container.scrollTo({ left: idx * tickWidth, behavior: 'smooth' });
+          });
+        });
+
+        updateSpeedFromScroll();
+      }
+
+      // ---------- SUBTÍTULOS / LETRA ----------
+      function toggleSubtitles() {
+        PlayerState.subtitlesEnabled = !PlayerState.subtitlesEnabled;
+        if (PlayerState.subtitlesEnabled && PlayerState.lyricsLines.length > 0) {
+          // En modo audio, abrir panel con info si estamos en escritorio
+          if (!PlayerState.isMobile && PlayerState.mode === 'popout-audio') {
+            openPanel('info');
+          } else if (PlayerState.isMobile && PlayerState.mode === 'mobile-expanded') {
+            // En móvil, activar vista de transcripción (cambia cover por texto)
+            document.getElementById('mobile-media-container').classList.add('subtitles-active');
+          }
+        } else {
+          if (!PlayerState.isMobile && PlayerState.mode === 'popout-audio') {
+            closePanel();
+          } else if (PlayerState.isMobile && PlayerState.mode === 'mobile-expanded') {
+            document.getElementById('mobile-media-container').classList.remove('subtitles-active');
+          }
+        }
+        updateSubtitlesUI();
+      }
+
+      function updateSubtitlesUI() {
+        const overlay = document.getElementById('subtitles-overlay');
+        if (overlay) {
+          if (PlayerState.subtitlesEnabled && PlayerState.activeLyricIndex >= 0) {
+            overlay.textContent = PlayerState.lyricsLines[PlayerState.activeLyricIndex]?.text || '';
+            overlay.style.display = 'block';
+          } else {
+            overlay.style.display = 'none';
+          }
+        }
+        renderLyrics();
+      }
+
+      function renderLyrics() {
+        const lyricsArea = document.getElementById('audio-lyrics-area');
+        if (lyricsArea && !PlayerState.isMobile && PlayerState.mode === 'popout-audio' && PlayerState.subtitlesEnabled) {
+          let html = '<div class="lyrics-container">';
+          PlayerState.lyricsLines.forEach((line, idx) => {
+            html += `<div class="lyrics-line ${idx === PlayerState.activeLyricIndex ? 'active' : ''}">${line.text}</div>`;
+          });
+          html += '</div>';
+          lyricsArea.innerHTML = html;
+        } else if (lyricsArea) {
+          lyricsArea.innerHTML = '';
+        }
+      }
+
+      // ---------- CAMBIO DE VISTAS ----------
+      function setMode(newMode) {
+        PlayerState.mode = newMode;
+        if (PlayerState.isMobile) {
+          if (newMode === 'minimized') {
+            document.getElementById('mobile-minimized').classList.remove('hidden');
+            document.getElementById('mobile-expanded').classList.add('hidden');
+          } else if (newMode === 'mobile-expanded') {
+            document.getElementById('mobile-minimized').classList.add('hidden');
+            document.getElementById('mobile-expanded').classList.remove('hidden');
+            renderMobileExpanded();
+          }
+        } else {
+          document.getElementById('view-minimized')?.classList.add('hidden');
+          document.getElementById('view-popout')?.classList.add('hidden');
+          document.getElementById('view-fullscreen')?.classList.add('hidden');
+          if (newMode === 'minimized') {
+            document.getElementById('view-minimized')?.classList.remove('hidden');
+            renderBottomBar('bottom-bar');
+          } else if (newMode.startsWith('popout')) {
+            document.getElementById('view-popout')?.classList.remove('hidden');
+            renderBottomBar('popout-bottom-bar');
+            const videoBtn = document.getElementById('mode-video');
+            const audioBtn = document.getElementById('mode-audio');
+            const hasVideo = !!PlayerState.episode?.mp4;
+            const hasAudio = !!PlayerState.episode?.mp3;
+            videoBtn.disabled = !hasVideo;
+            audioBtn.disabled = !hasAudio;
+            if (newMode === 'popout-video') {
+              videoBtn.classList.add('bg-primary', 'text-white');
+              audioBtn.classList.remove('bg-primary', 'text-white');
+              videoElement.classList.remove('hidden');
+              document.getElementById('popout-cover')?.classList.add('hidden');
+              document.getElementById('fullscreen-btn')?.classList.remove('hidden');
+              document.getElementById('media-content').classList.remove('flex-col', 'items-start', 'justify-end');
+            } else {
+              audioBtn.classList.add('bg-primary', 'text-white');
+              videoBtn.classList.remove('bg-primary', 'text-white');
+              videoElement.classList.add('hidden');
+              document.getElementById('popout-cover')?.classList.remove('hidden');
+              document.getElementById('fullscreen-btn')?.classList.add('hidden');
+              document.getElementById('media-content').classList.add('flex-col', 'items-start', 'justify-end');
+            }
+            if (PlayerState.episode?.mp4) videoElement.src = PlayerState.episode.mp4;
+            if (PlayerState.episode?.mp3) audioElement.src = PlayerState.episode.mp3;
+          } else if (newMode === 'fullscreen') {
+            document.getElementById('view-fullscreen')?.classList.remove('hidden');
+            if (PlayerState.episode?.mp4) {
+              fullscreenVideo.src = PlayerState.episode.mp4;
+              fullscreenVideo.currentTime = PlayerState.currentTime;
+              fullscreenVideo.classList.remove('hidden');
+              document.getElementById('fullscreen-cover')?.classList.add('hidden');
+            } else {
+              fullscreenVideo.classList.add('hidden');
+              document.getElementById('fullscreen-cover').src = PlayerState.episode?.cover;
+              document.getElementById('fullscreen-cover').classList.remove('hidden');
+            }
+            if (!PlayerState.paused) fullscreenVideo.play();
+            document.getElementById('fullscreen-title').innerText = PlayerState.episode?.title || '';
+          }
+        }
+        if (PlayerState.panelOpen) {
+          applyPanelUI();
+          renderPanelContent(PlayerState.panelTab);
+        }
+        saveState();
+      }
+
+      // ---------- RENDERIZADO DE BARRA INFERIOR ESCRITORIO ----------
+      function renderBottomBar(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        const ep = PlayerState.episode || defaultEpisode;
+        const isFav = PlayerState.favorites.includes(ep.id);
+        const isSaved = PlayerState.savedList.some(e => e.id === ep.id);
+        container.innerHTML = `
+          <div class="max-w-[1920px] mx-auto grid grid-cols-3 items-center h-24 px-6 gap-4 relative">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-slate-800 progress-container cursor-pointer group" id="progress-container">
+              <div class="h-full bg-primary relative progress-fill" style="width: ${(PlayerState.currentTime/PlayerState.duration*100)||0}%">
+                <div class="progress-thumb absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-primary rounded-full shadow-lg opacity-0"></div>
+              </div>
+            </div>
+            <div class="flex items-center gap-4 min-w-0">
+              <div class="relative group cursor-pointer" id="cover-popout-trigger">
+                <img src="${ep.cover}" class="size-14 rounded-lg object-cover border border-white/10 episode-cover">
+                <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center"><span class="material-symbols-outlined">expand_less</span></div>
+              </div>
+              <div class="flex flex-col min-w-0">
+                <h3 class="font-medium truncate text-sm" id="title-episode">${ep.title}</h3>
+                <p class="text-xs text-slate-400 truncate">${ep.author}</p>
+              </div>
+              <button class="p-1.5 rounded-full hover:bg-slate-800" id="add-to-list-btn" title="Añadir a lista">
+                <span class="material-symbols-outlined text-xl saved-icon ${isSaved ? 'text-yellow-500 fill-1' : ''}">playlist_add</span>
+              </button>
+              <div class="relative group">
+                <button class="p-1.5 rounded-full hover:bg-slate-800" id="more-menu-btn"><span class="material-symbols-outlined">more_vert</span></button>
+                <div class="absolute bottom-full left-0 mb-2 w-48 bg-slate-900 border border-white/10 rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all p-2">
+                  <div class="flex gap-1">
+                    <div class="flex-1 bg-slate-800 p-2 rounded-lg flex flex-col items-center cursor-pointer" id="speed-btn-panel">
+                      <span class="material-symbols-outlined text-sm">speed</span><span class="text-[10px]">Velocidad</span>
+                    </div>
+                    <div class="flex-1 bg-slate-800 p-2 rounded-lg flex flex-col items-center cursor-pointer" id="timer-btn-panel">
+                      <span class="material-symbols-outlined text-sm">timer</span><span class="text-[10px]">Temporizador</span>
+                    </div>
+                  </div>
+                  <hr class="border-slate-800 my-1">
+                  <button class="flex items-center gap-3 px-3 py-2 text-xs hover:bg-slate-800 w-full rounded" id="download-btn"><span class="material-symbols-outlined text-sm">download</span> Descargar</button>
+                  <button class="flex items-center gap-3 px-3 py-2 text-xs hover:bg-slate-800 w-full rounded" id="share-btn"><span class="material-symbols-outlined text-sm">share</span> Compartir</button>
+                  <button class="flex items-center gap-3 px-3 py-2 text-xs hover:bg-slate-800 w-full rounded" id="info-btn"><span class="material-symbols-outlined text-sm">info</span> Ver info</button>
+                </div>
+              </div>
+            </div>
+            <div class="flex flex-col items-center">
+              <div class="flex items-center gap-4">
+                <button class="text-xs border border-slate-600 rounded px-1 py-0.5 hover:border-slate-400" id="speed-btn">${PlayerState.speed.toFixed(2)}x</button>
+                <button id="prev-btn"><span class="material-symbols-outlined">skip_previous</span></button>
+                <button id="back15"><span class="material-symbols-outlined">replay_10</span></button>
+                <button id="playpause-btn" class="size-11 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition"><span class="material-symbols-outlined text-3xl play-pause-icon">${PlayerState.paused ? 'play_arrow' : 'pause'}</span></button>
+                <button id="forward15"><span class="material-symbols-outlined">forward_10</span></button>
+                <button id="next-btn"><span class="material-symbols-outlined">skip_next</span></button>
+                <button id="repeat-btn"><span class="material-symbols-outlined">${PlayerState.repeat === 'one' ? 'repeat_one' : PlayerState.repeat === 'all' ? 'repeat' : 'repeat'}</span></button>
+              </div>
+            </div>
+            <div class="flex items-center justify-end gap-1">
+              <button class="p-2 hover:bg-slate-800 rounded-full" id="fav-btn">
+                <span class="material-symbols-outlined fav-icon ${isFav ? 'text-red-500 fill-1' : ''}">favorite</span>
+              </button>
+              <button class="p-2 hover:bg-slate-800 rounded-full" id="timer-btn"><span class="material-symbols-outlined">timer</span></button>
+              <button class="p-2 hover:bg-slate-800 rounded-full" id="cc-btn"><span class="material-symbols-outlined">${ep.gender === 'music' ? 'mic' : ep.gender === 'podcast' ? 'closed_caption' : 'info'}</span></button>
+              <button class="p-2 hover:bg-slate-800 rounded-full" id="queue-btn"><span class="material-symbols-outlined">queue_music</span></button>
+              <button class="p-2 hover:bg-slate-800 rounded-full" id="saved-btn"><span class="material-symbols-outlined bookmark-icon ${isSaved ? 'text-yellow-500 fill-1' : ''}">bookmark</span></button>
+              <div class="flex items-center volume-hover ml-2 pl-2 border-l border-slate-800">
+                <button class="p-2" id="volume-btn"><span class="material-symbols-outlined">${PlayerState.volume === 0 ? 'volume_off' : 'volume_up'}</span></button>
+                <div class="volume-slider flex items-center px-2">
+                  <div class="h-1 w-full bg-slate-700 rounded-full overflow-hidden relative" style="width: 80px;">
+                    <div class="h-full bg-slate-300" style="width: ${PlayerState.volume*100}%;" id="volume-fill"></div>
+                    <input type="range" min="0" max="1" step="0.01" value="${PlayerState.volume}" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer" id="volume-range">
+                  </div>
+                </div>
+              </div>
+              <button class="p-2 ml-2 hover:text-primary rounded-lg" id="popout-btn"><span class="material-symbols-outlined">picture_in_picture_alt</span></button>
+            </div>
+          </div>
+        `;
+        attachBottomBarEvents(containerId);
+      }
+
+      function attachBottomBarEvents(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.querySelector('#playpause-btn')?.addEventListener('click', togglePlay);
+        container.querySelector('#prev-btn')?.addEventListener('click', previous);
+        container.querySelector('#next-btn')?.addEventListener('click', next);
+        container.querySelector('#back15')?.addEventListener('click', () => seekBy(-15));
+        container.querySelector('#forward15')?.addEventListener('click', () => seekBy(15));
+        container.querySelector('#repeat-btn')?.addEventListener('click', cycleRepeat);
+        container.querySelector('#speed-btn')?.addEventListener('click', () => togglePanel('speed'));
+        container.querySelector('#timer-btn')?.addEventListener('click', () => togglePanel('timer'));
+        container.querySelector('#queue-btn')?.addEventListener('click', () => togglePanel('queue'));
+        container.querySelector('#saved-btn')?.addEventListener('click', () => togglePanel('saved'));
+        container.querySelector('#cc-btn')?.addEventListener('click', () => {
+          if (PlayerState.episode?.gender === 'false') togglePanel('info');
+          else toggleSubtitles();
+        });
+        container.querySelector('#fav-btn')?.addEventListener('click', toggleFavorite);
+        container.querySelector('#add-to-list-btn')?.addEventListener('click', toggleSavedList);
+        container.querySelector('#popout-btn')?.addEventListener('click', () => {
+          if (PlayerState.isMobile) setMode('mobile-expanded');
+          else if (PlayerState.mode.startsWith('popout')) setMode('minimized');
+          else setMode(PlayerState.episode?.mp4 ? 'popout-video' : 'popout-audio');
+        });
+        container.querySelector('#cover-popout-trigger')?.addEventListener('click', () => {
+          if (PlayerState.isMobile) setMode('mobile-expanded');
+          else if (PlayerState.mode.startsWith('popout')) setMode('minimized');
+          else setMode(PlayerState.episode?.mp4 ? 'popout-video' : 'popout-audio');
+        });
+        container.querySelector('#speed-btn-panel')?.addEventListener('click', () => togglePanel('speed'));
+        container.querySelector('#timer-btn-panel')?.addEventListener('click', () => togglePanel('timer'));
+        container.querySelector('#download-btn')?.addEventListener('click', () => {
+          if (PlayerState.episode?.mp3) window.open(PlayerState.episode.mp3, '_blank');
+        });
+        container.querySelector('#share-btn')?.addEventListener('click', () => {
+          if (PlayerState.episode?.detailsUrl) navigator.clipboard?.writeText(PlayerState.episode.detailsUrl);
+        });
+        container.querySelector('#info-btn')?.addEventListener('click', () => togglePanel('info'));
+        container.querySelector('#progress-container')?.addEventListener('click', (e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          const percent = (e.clientX - rect.left) / rect.width;
+          seekTo(percent * PlayerState.duration);
+        });
+        const volRange = container.querySelector('#volume-range');
+        if (volRange) {
+          volRange.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            PlayerState.volume = val;
+            audioElement.volume = val;
+            videoElement.volume = val;
+            fullscreenVideo.volume = val;
+            container.querySelector('#volume-fill').style.width = (val * 100) + '%';
+          });
+        }
+      }
+
+      function cycleRepeat() {
+        const states = ['off', 'one', 'all'];
+        const idx = states.indexOf(PlayerState.repeat);
+        PlayerState.repeat = states[(idx + 1) % states.length];
+        document.querySelectorAll('#repeat-btn .material-symbols-outlined').forEach(icon => {
+          icon.innerText = PlayerState.repeat === 'one' ? 'repeat_one' : 'repeat';
+        });
+        saveState();
+      }
+
+      // ---------- VISTA MÓVIL ----------
+      function renderMobileMinimized() {
+        const ep = PlayerState.episode || defaultEpisode;
+        return `
+          <footer class="mobile-minimized fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-xl border-t border-white/5 z-50 safe-area-bottom pb-4">
+            <div class="absolute -top-0.5 left-0 right-0 h-0.5 bg-slate-800">
+              <div class="h-full bg-primary progress-fill" style="width: ${(PlayerState.currentTime/PlayerState.duration*100)||0}%;"></div>
+            </div>
+            <div class="flex items-center justify-between px-4 h-16 cursor-pointer" id="mobile-minimized-content">
+              <div class="flex items-center gap-3 min-w-0 flex-1">
+                <div class="size-11 rounded-md bg-cover bg-center shadow-lg shrink-0 overflow-hidden border border-white/10" style="background-image: url('${ep.cover}');"></div>
+                <div class="flex flex-col min-w-0">
+                  <h3 class="text-sm font-semibold text-slate-100 truncate">${ep.title}</h3>
+                  <p class="text-[11px] text-slate-400 truncate uppercase tracking-wider font-medium">${ep.author}</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <button class="p-2 text-slate-100 active:scale-90 transition-transform" id="mobile-playpause-mini">
+                  <span class="material-symbols-outlined text-[32px] play-pause-icon">${PlayerState.paused ? 'play_arrow' : 'pause'}</span>
+                </button>
+                <button class="p-2 text-slate-300 active:scale-90 transition-transform" id="mobile-expand-btn">
+                  <span class="material-symbols-outlined text-[28px]">expand_less</span>
+                </button>
+              </div>
+            </div>
+            <div class="flex justify-center mt-1">
+              <div class="w-32 h-1 bg-white/20 rounded-full"></div>
+            </div>
+          </footer>
+        `;
+      }
+
+      function renderMobileExpanded() {
+        const ep = PlayerState.episode || defaultEpisode;
+        const isFav = PlayerState.favorites.includes(ep.id);
+        const isSaved = PlayerState.savedList.some(e => e.id === ep.id);
+        return `
+          <div class="mobile-expanded fixed inset-0 bg-[#101c22] z-[100] flex flex-col" style="background: ${getDynamicColor(ep.cover)};">
+            <header class="flex items-center justify-between p-4">
+              <button id="mobile-minimize-btn" class="p-2"><span class="material-symbols-outlined text-3xl">expand_more</span></button>
+              <div class="bg-black/30 backdrop-blur-md p-1 rounded-full flex items-center border border-white/10">
+                <button id="mobile-mode-video" class="px-5 py-1.5 rounded-full text-xs font-semibold ${PlayerState.mode === 'popout-video' ? 'bg-slate-700 text-white' : 'text-slate-400'}">Video</button>
+                <button id="mobile-mode-audio" class="px-5 py-1.5 rounded-full text-xs font-semibold ${PlayerState.mode === 'popout-audio' ? 'bg-slate-700 text-white' : 'text-slate-400'}">Audio</button>
+              </div>
+              <button id="mobile-more-btn" class="p-2"><span class="material-symbols-outlined">more_horiz</span></button>
+            </header>
+
+            <div class="flex-1 flex flex-col px-6 pt-4 pb-8">
+              <div class="flex-1 flex flex-col justify-center items-center py-4" id="mobile-media-container">
+                <div class="w-full aspect-square max-w-[400px] rounded-2xl overflow-hidden shadow-2xl border border-white/5 relative">
+                  <video id="mobile-video" class="w-full h-full object-contain ${PlayerState.mode === 'popout-video' ? '' : 'hidden'}" playsinline></video>
+                  <img id="mobile-cover" class="w-full h-full object-cover ${PlayerState.mode === 'popout-audio' ? '' : 'hidden'}" src="${ep.cover}" alt="cover">
+                  <div id="mobile-subtitles" class="absolute inset-0 bg-black/80 text-white p-4 overflow-y-auto ${PlayerState.subtitlesEnabled ? '' : 'hidden'}">
+                    ${PlayerState.lyricsLines.map((line, idx) => `<div class="text-xl mb-2 ${idx === PlayerState.activeLyricIndex ? 'text-primary' : ''}">${line.text}</div>`).join('')}
+                  </div>
+                  <button id="mobile-fullscreen-btn" class="absolute bottom-4 right-4 p-2 bg-black/40 hover:bg-black/60 rounded-lg border border-white/20 ${PlayerState.mode === 'popout-video' ? '' : 'hidden'}">
+                    <span class="material-symbols-outlined">fullscreen</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="mt-8 mb-6">
+                <div class="flex items-center justify-between gap-4">
+                  <div class="min-w-0">
+                    <h1 class="text-2xl font-bold truncate text-slate-50">${ep.title}</h1>
+                    <p class="text-lg text-slate-400 font-medium truncate">${ep.author}</p>
+                  </div>
+                  <button id="mobile-fav-btn" class="shrink-0 ${isFav ? 'text-red-500' : 'text-slate-400'} hover:text-red-500 transition-colors">
+                    <span class="material-symbols-outlined text-3xl fav-icon ${isFav ? 'fill-1' : ''}">favorite</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="mb-8">
+                <div class="relative h-1.5 w-full bg-slate-700/50 rounded-full overflow-hidden mb-2 cursor-pointer" id="mobile-progress-container">
+                  <div class="absolute top-0 left-0 h-full bg-primary progress-fill" style="width: ${(PlayerState.currentTime/PlayerState.duration*100)||0}%;"></div>
+                </div>
+                <div class="flex justify-between text-[11px] font-mono text-slate-500 tracking-wider">
+                  <span class="progress-time-current">${formatTime(PlayerState.currentTime)}</span>
+                  <span class="progress-time-total">${formatTime(PlayerState.duration)}</span>
+                </div>
+              </div>
+
+              <div class="flex items-center justify-between mb-10">
+                <button id="mobile-speed-btn" class="text-slate-400 hover:text-white transition-colors">
+                  <span class="text-sm font-bold border border-slate-600 rounded px-1.5 py-0.5">${PlayerState.speed.toFixed(2)}x</span>
+                </button>
+                <div class="flex items-center gap-6">
+                  <button id="mobile-prev" class="text-slate-300 hover:text-white transition-colors">
+                    <span class="material-symbols-outlined text-3xl">skip_previous</span>
+                  </button>
+                  <button id="mobile-back15" class="text-slate-300 hover:text-white transition-colors">
+                    <span class="material-symbols-outlined text-3xl">replay_10</span>
+                  </button>
+                  <button id="mobile-playpause" class="size-20 rounded-full bg-white text-background-dark flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-xl">
+                    <span class="material-symbols-outlined text-[48px] play-pause-icon">${PlayerState.paused ? 'play_arrow' : 'pause'}</span>
+                  </button>
+                  <button id="mobile-forward15" class="text-slate-300 hover:text-white transition-colors">
+                    <span class="material-symbols-outlined text-3xl">forward_10</span>
+                  </button>
+                  <button id="mobile-next" class="text-slate-300 hover:text-white transition-colors">
+                    <span class="material-symbols-outlined text-3xl">skip_next</span>
+                  </button>
+                </div>
+                <button id="mobile-repeat-btn" class="text-slate-400 hover:text-primary transition-colors">
+                  <span class="material-symbols-outlined text-2xl">${PlayerState.repeat === 'one' ? 'repeat_one' : 'repeat'}</span>
+                </button>
+              </div>
+
+              <div class="flex items-center justify-between px-4 pb-2">
+                <button id="mobile-timer-btn" class="flex flex-col items-center gap-1 text-slate-400 hover:text-white transition-colors">
+                  <span class="material-symbols-outlined">timer</span>
+                </button>
+                <button id="mobile-cc-btn" class="flex flex-col items-center gap-1 text-slate-400 hover:text-white transition-colors">
+                  <span class="material-symbols-outlined">${ep.gender === 'music' ? 'mic' : ep.gender === 'podcast' ? 'closed_caption' : 'info'}</span>
+                </button>
+                <button id="mobile-queue-btn" class="flex flex-col items-center gap-1 text-slate-400 hover:text-white transition-colors">
+                  <span class="material-symbols-outlined">queue_music</span>
+                </button>
+                <button id="mobile-share-btn" class="flex flex-col items-center gap-1 text-slate-400 hover:text-white transition-colors">
+                  <span class="material-symbols-outlined">share</span>
+                </button>
+                <button id="mobile-saved-btn" class="flex flex-col items-center gap-1 ${isSaved ? 'text-yellow-500' : 'text-slate-400'} hover:text-yellow-500 transition-colors">
+                  <span class="material-symbols-outlined saved-icon ${isSaved ? 'fill-1' : ''}">bookmark</span>
+                </button>
+              </div>
+            </div>
+          </div>
+          <!-- Bottom sheet para opciones -->
+          <div id="mobile-bottom-sheet" class="mobile-bottom-sheet bg-slate-900 text-white p-4">
+            <div class="drag-handle"></div>
+            <h3 class="text-lg font-bold mb-4">Opciones</h3>
+            <div class="space-y-4">
+              <button class="w-full text-left py-2 flex items-center gap-3" id="mobile-sheet-speed"><span class="material-symbols-outlined">speed</span> Velocidad</button>
+              <button class="w-full text-left py-2 flex items-center gap-3" id="mobile-sheet-timer"><span class="material-symbols-outlined">timer</span> Temporizador</button>
+              <button class="w-full text-left py-2 flex items-center gap-3" id="mobile-sheet-download"><span class="material-symbols-outlined">download</span> Descargar</button>
+              <button class="w-full text-left py-2 flex items-center gap-3" id="mobile-sheet-share"><span class="material-symbols-outlined">share</span> Compartir</button>
+              <button class="w-full text-left py-2 flex items-center gap-3" id="mobile-sheet-info"><span class="material-symbols-outlined">info</span> Info/Letra</button>
+            </div>
+          </div>
+        `;
+      }
+
+      function attachMobileEvents() {
+        document.getElementById('mobile-playpause-mini')?.addEventListener('click', togglePlay);
+        document.getElementById('mobile-expand-btn')?.addEventListener('click', () => setMode('mobile-expanded'));
+
+        if (document.getElementById('mobile-minimize-btn')) {
+          document.getElementById('mobile-minimize-btn').addEventListener('click', () => setMode('minimized'));
+        }
+        document.getElementById('mobile-mode-video')?.addEventListener('click', () => {
+          PlayerState.mode = 'popout-video';
+          renderMobileExpanded();
+        });
+        document.getElementById('mobile-mode-audio')?.addEventListener('click', () => {
+          PlayerState.mode = 'popout-audio';
+          renderMobileExpanded();
+        });
+        document.getElementById('mobile-more-btn')?.addEventListener('click', () => {
+          document.getElementById('mobile-bottom-sheet').classList.add('open');
+        });
+        document.getElementById('mobile-playpause')?.addEventListener('click', togglePlay);
+        document.getElementById('mobile-prev')?.addEventListener('click', previous);
+        document.getElementById('mobile-next')?.addEventListener('click', next);
+        document.getElementById('mobile-back15')?.addEventListener('click', () => seekBy(-15));
+        document.getElementById('mobile-forward15')?.addEventListener('click', () => seekBy(15));
+        document.getElementById('mobile-repeat-btn')?.addEventListener('click', cycleRepeat);
+        document.getElementById('mobile-speed-btn')?.addEventListener('click', () => openMobilePanel('speed'));
+        document.getElementById('mobile-timer-btn')?.addEventListener('click', () => openMobilePanel('timer'));
+        document.getElementById('mobile-cc-btn')?.addEventListener('click', toggleSubtitles);
+        document.getElementById('mobile-queue-btn')?.addEventListener('click', () => openMobilePanel('queue'));
+        document.getElementById('mobile-saved-btn')?.addEventListener('click', toggleSavedList);
+        document.getElementById('mobile-fav-btn')?.addEventListener('click', toggleFavorite);
+        document.getElementById('mobile-fullscreen-btn')?.addEventListener('click', () => setMode('fullscreen'));
+        document.getElementById('mobile-progress-container')?.addEventListener('click', (e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          const percent = (e.clientX - rect.left) / rect.width;
+          seekTo(percent * PlayerState.duration);
+        });
+
+        // Bottom sheet actions
+        document.getElementById('mobile-sheet-speed')?.addEventListener('click', () => {
+          document.getElementById('mobile-bottom-sheet').classList.remove('open');
+          openMobilePanel('speed');
+        });
+        document.getElementById('mobile-sheet-timer')?.addEventListener('click', () => {
+          document.getElementById('mobile-bottom-sheet').classList.remove('open');
+          openMobilePanel('timer');
+        });
+        document.getElementById('mobile-sheet-download')?.addEventListener('click', () => {
+          if (PlayerState.episode?.mp3) window.open(PlayerState.episode.mp3, '_blank');
+        });
+        document.getElementById('mobile-sheet-share')?.addEventListener('click', () => {
+          if (PlayerState.episode?.detailsUrl) navigator.clipboard?.writeText(PlayerState.episode.detailsUrl);
+        });
+        document.getElementById('mobile-sheet-info')?.addEventListener('click', () => {
+          document.getElementById('mobile-bottom-sheet').classList.remove('open');
+          openMobilePanel('info');
+        });
+
+        // Gestos (simplificados)
+        let touchStartY = 0;
+        document.addEventListener('touchstart', (e) => {
+          touchStartY = e.touches[0].clientY;
+        }, { passive: true });
+        document.addEventListener('touchend', (e) => {
+          const touchEndY = e.changedTouches[0].clientY;
+          const diff = touchEndY - touchStartY;
+          if (Math.abs(diff) > 50) {
+            if (diff > 0) { // swipe down
+              if (PlayerState.mode === 'mobile-expanded') setMode('minimized');
+              else if (document.getElementById('mobile-bottom-sheet').classList.contains('open')) {
+                document.getElementById('mobile-bottom-sheet').classList.remove('open');
+              }
+            } else { // swipe up
+              if (PlayerState.mode === 'minimized') setMode('mobile-expanded');
+            }
+          }
+        });
+      }
+
+      function openMobilePanel(tab) {
+        // Implementar panel modal para móvil (similar al bottom sheet pero con contenido)
+        alert(`Panel ${tab} - implementar similar a escritorio`);
+      }
+
+      function closeMobilePanel() {}
+
+      function toggleMobilePanel(tab) {}
+
+      // ---------- CONSTRUCCIÓN PRINCIPAL ----------
+      function buildPlayerHTML() {
+        PlayerState.isMobile = window.innerWidth <= 768;
+        const ep = PlayerState.episode || defaultEpisode;
+        return `
+          <!-- Vista escritorio minimizada -->
+          <div id="view-minimized" class="desktop-only flex-1 flex flex-col relative">
+            <div class="flex-1 p-8 overflow-auto opacity-30 pointer-events-none"></div>
+            <div id="bottom-bar" class="glass-dark border-t border-white/10 absolute bottom-0 left-0 right-0 z-50"></div>
+          </div>
+
+          <!-- Vista escritorio pop-out -->
+          <div id="view-popout" class="desktop-only hidden flex-1 flex flex-col absolute inset-0 z-40">
+            <header class="flex items-center justify-between px-6 h-14 glass border-b border-white/10">
+              <button id="close-popout" class="p-2 hover:bg-white/10 rounded-lg"><span class="material-symbols-outlined">expand_more</span></button>
+              <div class="flex bg-black/40 p-1 rounded-full">
+                <button id="mode-video" class="flex items-center gap-1 px-4 py-1 rounded-full text-sm font-bold transition-all"><span class="material-symbols-outlined text-lg">videocam</span> Video</button>
+                <button id="mode-audio" class="flex items-center gap-1 px-4 py-1 rounded-full text-sm font-bold transition-all"><span class="material-symbols-outlined text-lg">audiotrack</span> Audio</button>
+              </div>
+              <div class="w-10"></div>
+            </header>
+            <div id="popout-main" class="flex-1 flex relative">
+              <div id="media-content" class="media-content w-full h-full flex items-center justify-center relative transition-all duration-300">
+                <video id="popout-video" class="max-w-full max-h-full object-contain hidden" playsinline></video>
+                <img id="popout-cover" class="max-w-full max-h-full object-contain rounded-2xl shadow-2xl hidden" alt="cover">
+                <div id="subtitles-overlay" class="subtitles-overlay hidden"></div>
+                <button id="fullscreen-btn" class="absolute bottom-4 right-4 p-3 bg-black/40 hover:bg-black/60 rounded-lg border border-white/20 z-10 hidden"><span class="material-symbols-outlined">fullscreen</span></button>
+              </div>
+              <div id="side-panel" class="side-panel w-0 bg-black/60 backdrop-blur-xl border-l border-white/10 overflow-hidden transition-all duration-300">
+                <div class="h-full flex flex-col p-4">
+                  <div class="flex items-center gap-3 pb-4 border-b border-white/10">
+                    <img id="panel-cover" class="w-12 h-12 rounded-lg object-cover" src="${ep.cover}" alt="">
+                    <div class="flex-1 min-w-0">
+                      <div class="font-medium truncate" id="panel-title">${ep.title}</div>
+                      <div class="text-xs text-slate-400 truncate" id="panel-author">${ep.author}</div>
+                    </div>
+                    <button id="panel-playpause" class="p-2 bg-primary rounded-full"><span class="material-symbols-outlined text-2xl play-pause-icon">${PlayerState.paused ? 'play_arrow' : 'pause'}</span></button>
+                  </div>
+                  <div class="flex items-center justify-between mt-2">
+                    <div class="flex gap-4 text-sm font-medium">
+                      <button data-panel-tab="queue" class="tab-btn text-primary border-b-2 border-primary pb-1">A continuación</button>
+                      <button data-panel-tab="saved" class="tab-btn text-slate-400 pb-1">Guardados</button>
+                      <button data-panel-tab="info" class="tab-btn text-slate-400 pb-1">Info/Letra</button>
+                    </div>
+                    <button id="close-panel" class="p-1"><span class="material-symbols-outlined">close</span></button>
+                  </div>
+                  <div id="panel-content" class="flex-1 overflow-y-auto mt-4 custom-scroll"></div>
+                </div>
+              </div>
+            </div>
+            <div id="popout-bottom-bar" class="glass-dark border-t border-white/10"></div>
+          </div>
+
+          <!-- Vista fullscreen escritorio -->
+          <div id="view-fullscreen" class="desktop-only hidden fixed inset-0 z-[100] bg-black flex flex-col">
+            <div class="absolute inset-0 flex items-center justify-center">
+              <video id="fullscreen-video" class="w-full h-full object-contain" playsinline></video>
+              <img id="fullscreen-cover" class="w-full h-full object-contain hidden" alt="">
+            </div>
+            <div class="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/80 pointer-events-none"></div>
+            <div class="absolute top-8 left-8 text-2xl font-bold z-10" id="fullscreen-title">${ep.title}</div>
+            <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 flex items-center gap-6 z-20">
+              <button class="text-white/70 hover:text-white text-4xl" id="fs-shuffle"><span class="material-symbols-outlined">shuffle</span></button>
+              <button class="text-white text-5xl" id="fs-prev"><span class="material-symbols-outlined">skip_previous</span></button>
+              <button class="text-white text-5xl" id="fs-back"><span class="material-symbols-outlined">replay_10</span></button>
+              <button class="w-20 h-20 bg-primary rounded-full flex items-center justify-center text-6xl hover:scale-105 transition" id="fs-playpause"><span class="material-symbols-outlined text-6xl play-pause-icon">${PlayerState.paused ? 'play_arrow' : 'pause'}</span></button>
+              <button class="text-white text-5xl" id="fs-forward"><span class="material-symbols-outlined">forward_10</span></button>
+              <button class="text-white text-5xl" id="fs-next"><span class="material-symbols-outlined">skip_next</span></button>
+              <button class="text-primary text-4xl" id="fs-repeat"><span class="material-symbols-outlined">${PlayerState.repeat === 'one' ? 'repeat_one' : 'repeat'}</span></button>
+            </div>
+            <div class="absolute bottom-8 left-0 right-0 px-8 z-20">
+              <div class="flex items-center justify-between text-sm mb-2">
+                <span id="fs-current">${formatTime(PlayerState.currentTime)}</span>
+                <span id="fs-duration">${formatTime(PlayerState.duration)}</span>
+              </div>
+              <div class="relative h-1 bg-white/20 rounded-full w-full cursor-pointer" id="fs-progress-container">
+                <div class="absolute top-0 left-0 h-1 bg-primary rounded-full" id="fs-progress-fill" style="width: ${(PlayerState.currentTime/PlayerState.duration*100)||0}%"></div>
+              </div>
+              <div class="flex items-center justify-between mt-4">
+                <div class="flex gap-4">
+                  <button class="flex items-center gap-1 text-white" id="fs-speed"><span class="text-sm">${PlayerState.speed.toFixed(2)}x</span><span class="material-symbols-outlined">speed</span></button>
+                </div>
+                <div class="flex items-center gap-6">
+                  <div class="flex items-center gap-2 group/vol">
+                    <button id="fs-volume-btn"><span class="material-symbols-outlined">${PlayerState.volume === 0 ? 'volume_off' : 'volume_up'}</span></button>
+                    <div class="w-20 h-1 bg-white/20 rounded-full relative">
+                      <div class="absolute top-0 left-0 h-1 bg-primary rounded-full" id="fs-volume-fill" style="width: ${PlayerState.volume*100}%"></div>
+                      <input type="range" min="0" max="1" step="0.01" value="${PlayerState.volume}" class="absolute top-0 left-0 w-full h-full opacity-0 cursor-pointer" id="fs-volume-range">
+                    </div>
+                  </div>
+                  <button id="fs-exit"><span class="material-symbols-outlined">fullscreen_exit</span></button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Vista móvil minimizada -->
+          <div id="mobile-minimized" class="mobile-only fixed bottom-0 left-0 right-0 z-50">
+            ${renderMobileMinimized()}
+          </div>
+
+          <!-- Vista móvil expandida (se inyecta dinámicamente) -->
+          <div id="mobile-expanded" class="mobile-only hidden fixed inset-0 z-[100]"></div>
+
+          <!-- Indicadores de avance/retroceso (escritorio) -->
+          <div id="seek-indicator-left" class="seek-indicator left-10"><span class="material-symbols-outlined">forward_10</span> <span id="seek-value">0s</span></div>
+          <div id="seek-indicator-right" class="seek-indicator right-10"><span class="material-symbols-outlined">replay_10</span> <span id="seek-value-right">0s</span></div>
+        `;
+      }
+
+      // ---------- INICIALIZACIÓN ----------
+      function init() {
+        loadState();
+        document.getElementById('player-root').innerHTML = buildPlayerHTML();
+        initMedia();
+        setMode(PlayerState.isMobile ? 'minimized' : 'minimized');
+        loadEpisode(PlayerState.episode, !PlayerState.paused);
+
+        if (PlayerState.isMobile) {
+          attachMobileEvents();
+        } else {
+          // Eventos escritorio
+          document.getElementById('close-popout')?.addEventListener('click', () => setMode('minimized'));
+          document.getElementById('mode-video')?.addEventListener('click', () => setMode('popout-video'));
+          document.getElementById('mode-audio')?.addEventListener('click', () => setMode('popout-audio'));
+          document.getElementById('fullscreen-btn')?.addEventListener('click', () => setMode('fullscreen'));
+          document.getElementById('fs-exit')?.addEventListener('click', () => setMode('popout-video'));
+          document.getElementById('close-panel')?.addEventListener('click', closePanel);
+          document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              const tab = e.target.dataset.panelTab;
+              PlayerState.panelTab = tab;
+              renderPanelContent(tab);
+            });
+          });
+          document.getElementById('panel-playpause')?.addEventListener('click', togglePlay);
+          document.getElementById('fs-playpause')?.addEventListener('click', togglePlay);
+          document.getElementById('fs-prev')?.addEventListener('click', previous);
+          document.getElementById('fs-next')?.addEventListener('click', next);
+          document.getElementById('fs-back')?.addEventListener('click', () => seekBy(-15));
+          document.getElementById('fs-forward')?.addEventListener('click', () => seekBy(15));
+          document.getElementById('fs-repeat')?.addEventListener('click', cycleRepeat);
+          document.getElementById('fs-shuffle')?.addEventListener('click', () => PlayerState.shuffle = !PlayerState.shuffle);
+          document.getElementById('fs-speed')?.addEventListener('click', () => togglePanel('speed'));
+          document.getElementById('fs-progress-container')?.addEventListener('click', (e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const percent = (e.clientX - rect.left) / rect.width;
+            seekTo(percent * PlayerState.duration);
+          });
+          document.getElementById('fs-volume-range')?.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            PlayerState.volume = val;
+            audioElement.volume = val;
+            videoElement.volume = val;
+            fullscreenVideo.volume = val;
+            document.getElementById('fs-volume-fill').style.width = (val * 100) + '%';
+          });
+        }
+
+        // Temporizador cada segundo
+        setInterval(() => {
+          if (PlayerState.timer) {
+            if (PlayerState.timer.type === 'countdown') {
+              const now = Date.now();
+              if (now >= PlayerState.timer.endTime) {
+                pause();
+                PlayerState.timer = null;
+                saveState();
+              }
+            } else if (PlayerState.timer.type === 'end') {
+              // Ya se maneja en timeupdate
+            }
+            if (PlayerState.panelOpen && PlayerState.panelTab === 'timer') renderPanelContent('timer');
+          }
+        }, 1000);
+
+        // Detectar cambio de orientación / tamaño
+        window.addEventListener('resize', () => {
+          const wasMobile = PlayerState.isMobile;
+          PlayerState.isMobile = window.innerWidth <= 768;
+          if (wasMobile !== PlayerState.isMobile) {
+            // Recargar vista (simplificado)
+            document.getElementById('player-root').innerHTML = buildPlayerHTML();
+            initMedia();
+            setMode(PlayerState.isMobile ? 'minimized' : 'minimized');
+            if (PlayerState.isMobile) attachMobileEvents();
+          }
+        });
+      }
+
+      // Exponer API global
+      window.PlayerAPI = {
+        loadEpisode: (ep) => loadEpisode(ep, true),
+        addToFavorites: (epId) => { if (!PlayerState.favorites.includes(epId)) PlayerState.favorites.push(epId); saveState(); updateFavIcon(); },
+        removeFromFavorites: (epId) => { PlayerState.favorites = PlayerState.favorites.filter(id => id !== epId); saveState(); updateFavIcon(); },
+        addToSavedList: (ep) => { if (!PlayerState.savedList.some(e => e.id === ep.id)) PlayerState.savedList.push(ep); saveState(); updateSavedIcon(); },
+        removeFromSavedList: (epId) => { PlayerState.savedList = PlayerState.savedList.filter(e => e.id !== epId); saveState(); updateSavedIcon(); },
+        getFavorites: () => PlayerState.favorites,
+        getSavedList: () => PlayerState.savedList,
+        getHistory: () => PlayerState.history,
+        play,
+        pause,
+        togglePlay,
+        next,
+        previous,
+      };
+
+      init();
+    })();
+  </script>
+
+  <style>
+    .custom-scroll::-webkit-scrollbar { width: 6px; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .fill-1 { font-variation-settings: 'FILL' 1; }
+  </style>
+</body>
+</html>
